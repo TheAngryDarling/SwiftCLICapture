@@ -208,10 +208,11 @@ open class CLICapture {
             if let b = self.stdOutBuffer {
                 b.append(data, to: .out)
             } else {
-                DispatchIO.write(toFileDescriptor: STDOUT_FILENO,
-                                 data: data,
-                                 runningHandlerOn: writeQueue,
-                                 handler: { _, _ in })
+                DispatchIO.writeAllAndWait(toFileDescriptor: STDOUT_FILENO,
+                                           data: data)
+                
+                fflush(stdout)
+                fsync(STDOUT_FILENO)
             }
         }
     }
@@ -221,10 +222,10 @@ open class CLICapture {
             if let b = self.stdErrBuffer {
                 b.append(data, to: .err)
             } else {
-                DispatchIO.write(toFileDescriptor: STDERR_FILENO,
-                                 data: data,
-                                 runningHandlerOn: writeQueue,
-                                 handler: { _, _ in })
+                DispatchIO.writeAllAndWait(toFileDescriptor: STDERR_FILENO,
+                                           data: data)
+                fflush(stderr)
+                fsync(STDERR_FILENO)
             }
         }
     }

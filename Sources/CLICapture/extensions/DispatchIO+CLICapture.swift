@@ -137,4 +137,115 @@ internal extension DispatchIO {
                                   handler: handler)
         
     }
+    
+    /// Write all data to the file descriptor
+    /// - Parameters:
+    ///   - fileDescriptor: The file descriptor to write to
+    ///   - data: The data to write
+    ///   - queue: The queue to send the finishe handler
+    ///   - handler: The handler to call when finished
+    static func writeAll(toFileDescriptor fileDescriptor: Int32,
+                         data: DispatchData,
+                         runningHandlerOn queue: DispatchQueue,
+                         handler: @escaping (DispatchData?, Int32) -> Void ) {
+        
+        DispatchIO.write(toFileDescriptor: fileDescriptor,
+                         data: data,
+                         runningHandlerOn: queue) {
+            leftover, error in
+            if error == 0,
+               let lf = leftover {
+                DispatchIO.writeAll(toFileDescriptor: fileDescriptor,
+                                    data: lf,
+                                    runningHandlerOn: queue,
+                                    handler: handler)
+                
+            } else {
+                handler(leftover, error)
+            }
+            
+        }
+        
+    }
+    
+    
+    /// Write all data to the file descriptor and wait until done
+    /// - Parameters:
+    ///   - fileDescriptor: The file descriptor to write to
+    ///   - data: The data to write
+    /// - Returns: Returns any leftover and error code.
+    @discardableResult
+    static func writeAllAndWait(toFileDescriptor fileDescriptor: Int32,
+                                data: DispatchData) -> (leftover: DispatchData?,
+                                                        error: Int32) {
+        
+        let semaphore = DispatchSemaphore(value: 0)
+        var lo: DispatchData? = nil
+        var er: Int32 = 0
+        DispatchIO.writeAll(toFileDescriptor: fileDescriptor,
+                            data: data,
+                            runningHandlerOn: DispatchQueue(label: "DispatchIO.writeAll")) {
+            leftover, error in
+            
+            lo = leftover
+            er = error
+            
+            semaphore.signal()
+        }
+        
+        semaphore.wait()
+        
+        return (leftover: lo,
+                error: er)
+    }
+    
+    /// Write all data to the file handle
+    /// - Parameters:
+    ///   - fileHandle: The file handle to write to
+    ///   - data: The data to write
+    ///   - queue: The queue to send the finishe handler
+    ///   - handler: The handler to call when finished
+    static func writeAll(to fileHandle: FileHandle,
+                         data: DispatchData,
+                         runningHandlerOn queue: DispatchQueue,
+                         handler: @escaping (DispatchData?, Int32) -> Void ) {
+        
+        DispatchIO.writeAll(toFileDescriptor: fileHandle.fileDescriptor,
+                            data: data,
+                            runningHandlerOn: queue,
+                            handler: handler)
+        
+    }
+    
+    
+    /// Write all data to the file handle and wait until done
+    /// - Parameters:
+    ///   - fileHandle: The file handle to write to
+    ///   - data: The data to write
+    /// - Returns: Returns any leftover and error code.
+    @discardableResult
+    static func writeAllAndWait(to fileHandle: FileHandle,
+                                data: DispatchData) -> (leftover: DispatchData?,
+                                                        error: Int32) {
+        
+        let semaphore = DispatchSemaphore(value: 0)
+        var lo: DispatchData? = nil
+        var er: Int32 = 0
+        DispatchIO.writeAll(to: fileHandle,
+                            data: data,
+                            runningHandlerOn: DispatchQueue(label: "DispatchIO.writeAll")) {
+            leftover, error in
+            
+            lo = leftover
+            er = error
+            
+            semaphore.signal()
+        }
+        
+        semaphore.wait()
+        
+        return (leftover: lo,
+                error: er)
+    }
+    
 }
