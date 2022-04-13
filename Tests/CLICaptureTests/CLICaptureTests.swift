@@ -1,4 +1,6 @@
 import XCTest
+import Dispatch
+import SynchronizeObjects
 @testable import CLICapture
 
 final class CLICaptureTests: XCTestCase {
@@ -72,8 +74,9 @@ final class CLICaptureTests: XCTestCase {
         
     }
     
-    func testOut() {
-        let cliCapture = CLICapture(executable: URL(fileURLWithPath: "/usr/bin/swift"))
+    func _testOut<Q>(_ q: Q) where Q: Lockable {
+        let cliCapture = CLICapture(outputLock: q,
+                                    executable: URL(fileURLWithPath: "/usr/bin/swift"))
         
         let stdOutBuffer = CLICapture.STDBuffer()
         let stdErrBuffer = CLICapture.STDBuffer()
@@ -132,8 +135,15 @@ final class CLICaptureTests: XCTestCase {
         }
     }
     
-    func testErr() {
-        let cliCapture = CLICapture(executable: URL(fileURLWithPath: "/usr/bin/swift"))
+    func testOut() {
+        _testOut(NSLock())
+        _testOut(DispatchQueue(label: "CLICapture.Output"))
+        _testOut(OperationQueue())
+    }
+    
+    func _testErr<Q>(_ q: Q) where Q: Lockable {
+        let cliCapture = CLICapture(outputLock: q,
+                                    executable: URL(fileURLWithPath: "/usr/bin/swift"))
         
         let stdOutBuffer = CLICapture.STDBuffer()
         let stdErrBuffer = CLICapture.STDBuffer()
@@ -194,8 +204,15 @@ final class CLICaptureTests: XCTestCase {
         }
     }
     
-    func testNone() {
-        let cliCapture = CLICapture(executable: URL(fileURLWithPath: "/usr/bin/swift"))
+    func testErr() {
+        _testErr(NSLock())
+        _testErr(DispatchQueue(label: "CLICapture.Output"))
+        _testErr(OperationQueue())
+    }
+    
+    func _testNone<Q>(_ q: Q) where Q: Lockable {
+        let cliCapture = CLICapture(outputLock: q,
+                                    executable: URL(fileURLWithPath: "/usr/bin/swift"))
         
         let stdOutBuffer = CLICapture.STDBuffer()
         let stdErrBuffer = CLICapture.STDBuffer()
@@ -258,8 +275,15 @@ final class CLICaptureTests: XCTestCase {
         }
     }
     
-    func testAll() {
-        let cliCapture = CLICapture(executable: URL(fileURLWithPath: "/usr/bin/swift"))
+    func testNone() {
+        _testNone(NSLock())
+        _testNone(DispatchQueue(label: "CLICapture.Output"))
+        _testNone(OperationQueue())
+    }
+    
+    func _testAll<Q>(_ q: Q) where Q: Lockable {
+        let cliCapture = CLICapture(outputLock: q,
+                                    executable: URL(fileURLWithPath: "/usr/bin/swift"))
         
         let stdOutBuffer = CLICapture.STDBuffer()
         let stdErrBuffer = CLICapture.STDBuffer()
@@ -325,8 +349,15 @@ final class CLICaptureTests: XCTestCase {
         }
     }
     
-    func testExecute() {
-        let cliCapture = CLICapture(executable: URL(fileURLWithPath: "/usr/bin/swift"))
+    func testAll() {
+        _testAll(NSLock())
+        _testAll(DispatchQueue(label: "CLICapture.Output"))
+        _testAll(OperationQueue())
+    }
+    
+    func _testExecute<Q>(_ q: Q) where Q: Lockable {
+        let cliCapture = CLICapture(outputLock: q,
+                                    executable: URL(fileURLWithPath: "/usr/bin/swift"))
         
         let stdOutBuffer = CLICapture.STDBuffer()
         let stdErrBuffer = CLICapture.STDBuffer()
@@ -365,6 +396,12 @@ final class CLICaptureTests: XCTestCase {
         } catch {
             XCTFail("\(error)")
         }
+    }
+    
+    func testExecute() {
+        _testExecute(NSLock())
+        _testExecute(DispatchQueue(label: "CLICapture.Output"))
+        _testExecute(OperationQueue())
     }
     
     static var allTests = [

@@ -1,13 +1,13 @@
 //
 //  CLICapture.swift
-//  
+//
 //
 //  Created by Tyler Anger on 2022-03-25.
 //
 
 import Foundation
 import Dispatch
-//import SwiftPatches
+import SynchronizeObjects
 
 /// Object used to execute and/or capture output from a CLI process
 open class CLICapture {
@@ -138,30 +138,29 @@ open class CLICapture {
     
     
     /// Buffer used to capture what should be going to STDOUT
-    /// This property is only intended for use with CLICaptureTests
     internal var stdOutBuffer: STDBuffer? = nil
     /// Buffer used to capture what should be going to STDERR
-    /// This property is only intended for use with CLICaptureTests 
     internal var stdErrBuffer: STDBuffer? = nil
     /// Dispatch Queue used to handle events comming from writing to STD Outputs
     private let writeQueue = DispatchQueue(label: "CLICapture.STDOutput.write")
     
-    /// The dispatch queue to use when passing data back to the output
-    public let outputQueue: DispatchQueue
+    /// The object used to synchronized output calls
+    public let outputLock: Lockable
+    
     /// The closure used to create a new CLI process
     public let createProcess: CreateProcess
     
     /// Create a new CLI Capture object
     /// - Parameters:
-    ///   - outputQueue: The dispatch queue to use when passing data back to the output
+    ///   - outputLock: The object used to synchronized output calls
     ///   - stdOutBuffer: The buffer to redirect any STDOut writes to
     ///   - stdErrBuffer: The buffer to redirect any STDErr writes to
     ///   - createProcess: The closure used to create a new CLI process
-    public init(outputQueue: DispatchQueue = DispatchQueue(label: "CLICapture.output"),
+    public init(outputLock: Lockable = NSLock(),
                 stdOutBuffer: STDBuffer? = nil,
                 stdErrBuffer: STDBuffer? = nil,
                 createProcess: @escaping CreateProcess) {
-        self.outputQueue = outputQueue
+        self.outputLock = outputLock
         self.stdOutBuffer = stdOutBuffer
         self.stdErrBuffer = stdErrBuffer
         self.createProcess = createProcess
@@ -172,12 +171,64 @@ open class CLICapture {
     ///   - outputQueue: The dispatch queue to use when passing data back to the output
     ///   - stdOutBuffer: The buffer to redirect any STDOut writes to
     ///   - stdErrBuffer: The buffer to redirect any STDErr writes to
+    ///   - createProcess: The closure used to create a new CLI process
+    public init(outputQueue: DispatchQueue,
+                stdOutBuffer: STDBuffer? = nil,
+                stdErrBuffer: STDBuffer? = nil,
+                createProcess: @escaping CreateProcess) {
+        self.outputLock = outputQueue
+        self.stdOutBuffer = stdOutBuffer
+        self.stdErrBuffer = stdErrBuffer
+        self.createProcess = createProcess
+    }
+    
+    
+    /// Create a new CLI Capture object
+    /// - Parameters:
+    ///   - outputLock: The object used to synchronized output calls
+    ///   - stdOutBuffer: The buffer to redirect any STDOut writes to
+    ///   - stdErrBuffer: The buffer to redirect any STDErr writes to
     ///   - executable: The URL to the executable to use
-    public init(outputQueue: DispatchQueue = DispatchQueue(label: "CLICapture.output"),
+    public init(outputLock: Lockable = NSLock(),
                 stdOutBuffer: STDBuffer? = nil,
                 stdErrBuffer: STDBuffer? = nil,
                 executable: URL) {
-        self.outputQueue = outputQueue
+        self.outputLock = outputLock
+        self.stdOutBuffer = stdOutBuffer
+        self.stdErrBuffer = stdErrBuffer
+        self.createProcess = {
+            (_ arguments: [String],
+             _ environment: [String: String]?,
+             _ currentDirectory: URL?,
+             _ standardInput: Any?) -> Process in
+            
+            let rtn = Process()
+            rtn._cliCaptureExecutable = executable
+            rtn.arguments = arguments
+            if let env = environment {
+                rtn.environment = env
+            }
+            if let cd = currentDirectory {
+                rtn._cliCaptureCurrentDirectory = cd
+            }
+            if let si = standardInput {
+                rtn.standardInput = si
+            }
+            return rtn
+        }
+    }
+    
+    /// Create a new CLI Capture object
+    /// - Parameters:
+    ///   - outputQueue: The dispatch queue to use when passing data back to the output
+    ///   - stdOutBuffer: The buffer to redirect any STDOut writes to
+    ///   - stdErrBuffer: The buffer to redirect any STDErr writes to
+    ///   - executable: The URL to the executable to use
+    public init(outputQueue: DispatchQueue,
+                stdOutBuffer: STDBuffer? = nil,
+                stdErrBuffer: STDBuffer? = nil,
+                executable: URL) {
+        self.outputLock = outputQueue
         self.stdOutBuffer = stdOutBuffer
         self.stdErrBuffer = stdErrBuffer
         self.createProcess = {
@@ -204,7 +255,7 @@ open class CLICapture {
     
     /// Method used to write data to the STD Out or outBuffer is set
     fileprivate func writeDataToOut(_ data: DispatchData) {
-        self.outputQueue.sync {
+        self.outputLock.lockingFor {
             if let b = self.stdOutBuffer {
                 b.append(data, to: .out)
             } else {
@@ -218,7 +269,7 @@ open class CLICapture {
     }
     /// Method used to write data to the STD Err or errBuffer is set
     fileprivate func writeDataToErr(_ data: DispatchData) {
-        self.outputQueue.sync {
+        self.outputLock.lockingFor {
             if let b = self.stdErrBuffer {
                 b.append(data, to: .err)
             } else {
