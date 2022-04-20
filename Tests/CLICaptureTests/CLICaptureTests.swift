@@ -1,6 +1,5 @@
 import XCTest
 import Dispatch
-import SynchronizeObjects
 @testable import CLICapture
 
 final class CLICaptureTests: XCTestCase {
