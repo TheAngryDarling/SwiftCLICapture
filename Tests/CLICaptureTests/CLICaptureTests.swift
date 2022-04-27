@@ -86,8 +86,12 @@ final class CLICaptureTests: XCTestCase {
         
         do {
             
+            var respCore = try cliCapture.waitAndCaptureDataResponse(arguments: ["--version"],
+                                                                     outputOptions: .captureOut,
+                                                                     withDataType: Data.self)
+            
             var resp = try cliCapture.waitAndCaptureStringResponse(arguments: ["--version"],
-                                                                outputOptions: .captureOut)
+                                                                 outputOptions: .captureOut)
             
             guard XCTAssertsEqual(resp.exitStatusCode, 0,
                                   "Executing Swift Returned error code") else {
@@ -110,14 +114,25 @@ final class CLICaptureTests: XCTestCase {
             
             XCTAssertTrue(resp.out?.contains("Swift version") ?? false,
                           "Captured STD Out does not contain 'Swift version' in '\(resp.out ?? "")'")
+            let coreOut = String(optData: respCore.out, encoding: .utf8)
+            XCTAssertTrue(coreOut?.contains("Swift version") ?? false,
+                          "Captured STD Out does not contain 'Swift version' in '\(coreOut ?? "")'")
+            
             XCTAssertTrue(resp.err == nil, "Captured STD Err is not nil")
+            XCTAssertTrue(respCore.err == nil, "Captured STD Err is not nil")
+            
+            respCore = try cliCapture.waitAndCaptureDataResponse(arguments: ["--version"],
+                                                                     outputOptions: .passthroughOut,
+                                                                     withDataType: Data.self)
             
             resp = try cliCapture.waitAndCaptureStringResponse(arguments: ["--version"],
                                                                outputOptions: .passthroughOut)
             XCTAssertEqual(resp.exitStatusCode, 0,
                            "Executing Swift Returned error code")
             XCTAssertTrue(resp.out == nil, "Captured STD Out is not nil")
+            XCTAssertTrue(respCore.out == nil, "Captured STD Out is not nil")
             XCTAssertTrue(resp.err == nil, "Captured STD Err is not nil")
+            XCTAssertTrue(respCore.err == nil, "Captured STD Err is not nil")
             
             //print("Getting stdOut")
             guard let str = String(data: stdOutBuffer.readBuffer(),
@@ -153,13 +168,19 @@ final class CLICaptureTests: XCTestCase {
         
         do {
             
+            let respCore = try cliCapture.waitAndCaptureDataResponse(arguments: ["-blah"],
+                                                                     outputOptions: .captureErr,
+                                                                     withDataType: Data.self)
+            
             var resp = try cliCapture.waitAndCaptureStringResponse(arguments: ["-blah"],
                                                                    outputOptions: .captureErr)
             
             XCTAssertNotEqual(resp.exitStatusCode, 0,
                               "Executing Swift did NOT return error code")
             XCTAssertTrue(resp.out == nil, "Captured STD Out is not nil")
+            XCTAssertTrue(respCore.out == nil, "Captured STD Out is not nil")
             XCTAssertTrue(resp.err != nil, "Captured STD Err should not be nil")
+            XCTAssertTrue(respCore.err != nil, "Captured STD Err should not be nil")
             
             //print("Getting stdOut")
             if let str = String(data: stdOutBuffer.readBuffer(),
@@ -222,6 +243,10 @@ final class CLICaptureTests: XCTestCase {
         
         do {
             
+            var respCore = try cliCapture.waitAndCaptureDataResponse(arguments: ["--version"],
+                                                                     outputOptions: .none,
+                                                                     withDataType: Data.self)
+            
             var resp = try cliCapture.waitAndCaptureStringResponse(arguments: ["-version"],
                                                                    outputOptions: .none)
             
@@ -245,7 +270,14 @@ final class CLICaptureTests: XCTestCase {
             }
             
             XCTAssertTrue(resp.out == nil, "Captured STD Out is not nil")
+            XCTAssertTrue(respCore.out == nil, "Captured STD Out is not nil")
             XCTAssertTrue(resp.err == nil, "Captured STD Out is not nil")
+            XCTAssertTrue(respCore.err == nil, "Captured STD Out is not nil")
+            
+            
+            respCore = try cliCapture.waitAndCaptureDataResponse(arguments: ["-blah"],
+                                                                     outputOptions: .none,
+                                                                     withDataType: Data.self)
             
             resp = try cliCapture.waitAndCaptureStringResponse(arguments: ["-blah"],
                                                                    outputOptions: .none)
@@ -267,7 +299,9 @@ final class CLICaptureTests: XCTestCase {
             }
             
             XCTAssertTrue(resp.out == nil, "Captured STD Out is not nil")
+            XCTAssertTrue(respCore.out == nil, "Captured STD Out is not nil")
             XCTAssertTrue(resp.err == nil, "Captured STD Out is not nil")
+            XCTAssertTrue(respCore.err == nil, "Captured STD Out is not nil")
             
         } catch {
             XCTFail("\(error)")
@@ -293,6 +327,10 @@ final class CLICaptureTests: XCTestCase {
         
         do {
             
+            var respCore = try cliCapture.waitAndCaptureDataResponse(arguments: ["--version"],
+                                                                     outputOptions: .all,
+                                                                     withDataType: Data.self)
+            
             var resp = try cliCapture.waitAndCaptureStringResponse(arguments: ["--version"],
                                                                 outputOptions: .all)
             
@@ -317,16 +355,25 @@ final class CLICaptureTests: XCTestCase {
             
             XCTAssertTrue(resp.out?.contains("Swift version") ?? false,
                           "Captured STD Out does not contain 'Swift version' in '\(resp.out ?? "")'")
+            XCTAssertTrue(String(optData: respCore.out,
+                                 encoding: .utf8)?.contains("Swift version") ?? false,
+                          "Captured STD Out does not contain 'Swift version' in '\(String(optData: respCore.out, encoding: .utf8) ?? "")'")
             //XCTAssertTrue(resp.err == nil || resp.err!.isEmpty, "Captured STD Err is not nil")
             
+            respCore = try cliCapture.waitAndCaptureDataResponse(arguments: ["--blah",
+                                                                             "-version"],
+                                                                     outputOptions: .all,
+                                                                     withDataType: Data.self)
             
-            resp = try cliCapture.waitAndCaptureStringResponse(arguments: ["--blah", "-version"],
+            resp = try cliCapture.waitAndCaptureStringResponse(arguments: ["--blah",
+                                                                           "-version"],
                                                                outputOptions: .all)
             
             XCTAssertNotEqual(resp.exitStatusCode, 0,
                               "Executing Swift did NOT return error code")
             //XCTAssertTrue(resp.out == nil, "Captured STD Out is not nil")
             XCTAssertTrue(resp.err != nil, "Captured STD Err is nil")
+            XCTAssertTrue(respCore.err != nil, "Captured STD Err is nil")
             
             //print("Getting stdOut")
             /*guard let stdOut = String(data: stdOutBuffer.readBuffer(),
