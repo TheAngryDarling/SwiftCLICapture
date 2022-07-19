@@ -84,15 +84,24 @@ final class CLICaptureTests: XCTestCase {
         cliCapture.stdOutBuffer = stdOutBuffer
         cliCapture.stdErrBuffer = stdErrBuffer
         
+        var hasOutputWritten: Bool = false
+        func outputWritten(_ p: Process, _ std: CLICapture.STDOutputStream) {
+            hasOutputWritten = true
+        }
         do {
             
             var respCore = try cliCapture.waitAndCaptureDataResponse(arguments: ["--version"],
                                                                      outputOptions: .captureOut,
-                                                                     withDataType: Data.self)
-            
+                                                                     withDataType: Data.self,
+                                                                     processWroteToItsSTDOutput: outputWritten)
+            XCTAssertEqual(hasOutputWritten, true)
+            hasOutputWritten = false
             var resp = try cliCapture.waitAndCaptureStringResponse(arguments: ["--version"],
-                                                                 outputOptions: .captureOut)
+                                                                 outputOptions: .captureOut,
+                                                                   processWroteToItsSTDOutput: outputWritten)
             
+            XCTAssertEqual(hasOutputWritten, true)
+            hasOutputWritten = false
             guard XCTAssertsEqual(resp.exitStatusCode, 0,
                                   "Executing Swift Returned error code") else {
                 return
@@ -123,10 +132,18 @@ final class CLICaptureTests: XCTestCase {
             
             respCore = try cliCapture.waitAndCaptureDataResponse(arguments: ["--version"],
                                                                      outputOptions: .passthroughOut,
-                                                                     withDataType: Data.self)
+                                                                     withDataType: Data.self,
+                                                                 processWroteToItsSTDOutput: outputWritten)
+            
+            XCTAssertEqual(hasOutputWritten, true)
+            hasOutputWritten = false
             
             resp = try cliCapture.waitAndCaptureStringResponse(arguments: ["--version"],
-                                                               outputOptions: .passthroughOut)
+                                                               outputOptions: .passthroughOut,
+                                                               processWroteToItsSTDOutput: outputWritten)
+            XCTAssertEqual(hasOutputWritten, true)
+            hasOutputWritten = false
+            
             XCTAssertEqual(resp.exitStatusCode, 0,
                            "Executing Swift Returned error code")
             XCTAssertTrue(resp.out == nil, "Captured STD Out is not nil")
@@ -166,14 +183,27 @@ final class CLICaptureTests: XCTestCase {
         cliCapture.stdOutBuffer = stdOutBuffer
         cliCapture.stdErrBuffer = stdErrBuffer
         
+        var hasOutputWritten: Bool = false
+        func outputWritten(_ p: Process, _ std: CLICapture.STDOutputStream) {
+            hasOutputWritten = true
+        }
+        
         do {
             
             let respCore = try cliCapture.waitAndCaptureDataResponse(arguments: ["-blah"],
                                                                      outputOptions: .captureErr,
-                                                                     withDataType: Data.self)
+                                                                     withDataType: Data.self,
+                                                                     processWroteToItsSTDOutput: outputWritten)
+            
+            XCTAssertEqual(hasOutputWritten, true)
+            hasOutputWritten = false
             
             var resp = try cliCapture.waitAndCaptureStringResponse(arguments: ["-blah"],
-                                                                   outputOptions: .captureErr)
+                                                                   outputOptions: .captureErr,
+                                                                   processWroteToItsSTDOutput: outputWritten)
+            
+            XCTAssertEqual(hasOutputWritten, true)
+            hasOutputWritten = false
             
             XCTAssertNotEqual(resp.exitStatusCode, 0,
                               "Executing Swift did NOT return error code")
@@ -197,7 +227,11 @@ final class CLICaptureTests: XCTestCase {
             }
             
             resp = try cliCapture.waitAndCaptureStringResponse(arguments: ["-blah"],
-                                                                   outputOptions: .passthroughErr)
+                                                                   outputOptions: .passthroughErr,
+                                                               processWroteToItsSTDOutput: outputWritten)
+            
+            XCTAssertEqual(hasOutputWritten, true)
+            hasOutputWritten = false
             
             XCTAssertNotEqual(resp.exitStatusCode, 0,
                               "Executing Swift did NOT return error code")
@@ -240,15 +274,28 @@ final class CLICaptureTests: XCTestCase {
         cliCapture.stdOutBuffer = stdOutBuffer
         cliCapture.stdErrBuffer = stdErrBuffer
         
+        var hasOutputWritten: Bool = false
+        func outputWritten(_ p: Process, _ std: CLICapture.STDOutputStream) {
+            hasOutputWritten = true
+        }
+        
         
         do {
             
             var respCore = try cliCapture.waitAndCaptureDataResponse(arguments: ["--version"],
                                                                      outputOptions: .none,
-                                                                     withDataType: Data.self)
+                                                                     withDataType: Data.self,
+                                                                     processWroteToItsSTDOutput: outputWritten)
+            
+            XCTAssertEqual(hasOutputWritten, true)
+            hasOutputWritten = false
             
             var resp = try cliCapture.waitAndCaptureStringResponse(arguments: ["-version"],
-                                                                   outputOptions: .none)
+                                                                   outputOptions: .none,
+                                                                   processWroteToItsSTDOutput: outputWritten)
+            
+            XCTAssertEqual(hasOutputWritten, true)
+            hasOutputWritten = false
             
             guard XCTAssertsEqual(resp.exitStatusCode, 0,
                                   "Executing Swift Returned error code") else {
@@ -277,10 +324,18 @@ final class CLICaptureTests: XCTestCase {
             
             respCore = try cliCapture.waitAndCaptureDataResponse(arguments: ["-blah"],
                                                                      outputOptions: .none,
-                                                                     withDataType: Data.self)
+                                                                     withDataType: Data.self,
+                                                                 processWroteToItsSTDOutput: outputWritten)
+            
+            XCTAssertEqual(hasOutputWritten, true)
+            hasOutputWritten = false
             
             resp = try cliCapture.waitAndCaptureStringResponse(arguments: ["-blah"],
-                                                                   outputOptions: .none)
+                                                                   outputOptions: .none,
+                                                               processWroteToItsSTDOutput: outputWritten)
+            
+            XCTAssertEqual(hasOutputWritten, true)
+            hasOutputWritten = false
             
             XCTAssertNotEqual(resp.exitStatusCode, 0,
                               "Executing Swift did NOT return error code")
@@ -325,14 +380,27 @@ final class CLICaptureTests: XCTestCase {
         cliCapture.stdOutBuffer = stdOutBuffer
         cliCapture.stdErrBuffer = stdErrBuffer
         
+        var hasOutputWritten: Bool = false
+        func outputWritten(_ p: Process, _ std: CLICapture.STDOutputStream) {
+            hasOutputWritten = true
+        }
+        
         do {
             
             var respCore = try cliCapture.waitAndCaptureDataResponse(arguments: ["--version"],
                                                                      outputOptions: .all,
-                                                                     withDataType: Data.self)
+                                                                     withDataType: Data.self,
+                                                                     processWroteToItsSTDOutput: outputWritten)
+            
+            XCTAssertEqual(hasOutputWritten, true)
+            hasOutputWritten = false
             
             var resp = try cliCapture.waitAndCaptureStringResponse(arguments: ["--version"],
-                                                                outputOptions: .all)
+                                                                outputOptions: .all,
+                                                                   processWroteToItsSTDOutput: outputWritten)
+            
+            XCTAssertEqual(hasOutputWritten, true)
+            hasOutputWritten = false
             
             guard XCTAssertsEqual(resp.exitStatusCode, 0,
                                   "Executing Swift Returned error code") else {
@@ -363,11 +431,19 @@ final class CLICaptureTests: XCTestCase {
             respCore = try cliCapture.waitAndCaptureDataResponse(arguments: ["--blah",
                                                                              "-version"],
                                                                      outputOptions: .all,
-                                                                     withDataType: Data.self)
+                                                                     withDataType: Data.self,
+                                                                 processWroteToItsSTDOutput: outputWritten)
+            
+            XCTAssertEqual(hasOutputWritten, true)
+            hasOutputWritten = false
             
             resp = try cliCapture.waitAndCaptureStringResponse(arguments: ["--blah",
                                                                            "-version"],
-                                                               outputOptions: .all)
+                                                               outputOptions: .all,
+                                                               processWroteToItsSTDOutput: outputWritten)
+            
+            XCTAssertEqual(hasOutputWritten, true)
+            hasOutputWritten = false
             
             XCTAssertNotEqual(resp.exitStatusCode, 0,
                               "Executing Swift did NOT return error code")
@@ -412,9 +488,18 @@ final class CLICaptureTests: XCTestCase {
         cliCapture.stdOutBuffer = stdOutBuffer
         cliCapture.stdErrBuffer = stdErrBuffer
         
+        var hasOutputWritten: Bool = false
+        func outputWritten(_ p: Process, _ std: CLICapture.STDOutputStream) {
+            hasOutputWritten = true
+        }
+        
         do {
             let ret = try cliCapture.executeAndWait(arguments: ["-version"],
-                                              passthrougOptions: .none)
+                                              passthrougOptions: .none,
+                                                    processWroteToItsSTDOutput: outputWritten)
+            
+            XCTAssertEqual(hasOutputWritten, true)
+            hasOutputWritten = false
             
             XCTAssertEqual(ret, 0,
                            "Executing Swift Returned error code")
@@ -429,7 +514,11 @@ final class CLICaptureTests: XCTestCase {
         
         do {
             let ret = try cliCapture.executeAndWait(arguments: ["-blah"],
-                                              passthrougOptions: .all)
+                                              passthrougOptions: .all,
+                                                    processWroteToItsSTDOutput: outputWritten)
+            
+            XCTAssertEqual(hasOutputWritten, true)
+            hasOutputWritten = false
             
             XCTAssertNotEqual(ret, 0,
                               "Executing Swift did NOT return error code")

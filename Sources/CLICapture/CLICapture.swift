@@ -62,6 +62,11 @@ open class CLICapture {
         
     }
     
+    public enum STDOutputStream {
+        case out
+        case err
+    }
+    
     /// A Data buffer used to collect any
     /// Data that should be going to STD Out AND STD Err
     ///
@@ -124,10 +129,14 @@ open class CLICapture {
     ///   - environment: The enviromental variables to set
     ///   - currentDirectory: The current working directory to set
     ///   - standardInput: The standard input to set the core process
+    ///   - userInfo: Any user info to pass through to the create process method
+    ///   - stackTrace: The calling stack trace
     public typealias CreateProcess = (_ arguments: [String],
                                       _ environment: [String: String]?,
                                       _ currentDirectory: URL?,
-                                      _ standardInput: Any?) -> Process
+                                      _ standardInput: Any?,
+                                      _ userInfo: [String: Any],
+                                      _ stackTrace: CLIStackTrace) -> Process
     
     
     /// Event Handler for capturing events from a Process
@@ -196,26 +205,7 @@ open class CLICapture {
         self.outputLock = outputLock
         self.stdOutBuffer = stdOutBuffer
         self.stdErrBuffer = stdErrBuffer
-        self.createProcess = {
-            (_ arguments: [String],
-             _ environment: [String: String]?,
-             _ currentDirectory: URL?,
-             _ standardInput: Any?) -> Process in
-            
-            let rtn = Process()
-            rtn._cliCaptureExecutable = executable
-            rtn.arguments = arguments
-            if let env = environment {
-                rtn.environment = env
-            }
-            if let cd = currentDirectory {
-                rtn._cliCaptureCurrentDirectory = cd
-            }
-            if let si = standardInput {
-                rtn.standardInput = si
-            }
-            return rtn
-        }
+        self.createProcess = CLICapture.createProcessGenerator(for: executable)
     }
     
     /// Create a new CLI Capture object
@@ -231,11 +221,19 @@ open class CLICapture {
         self.outputLock = outputQueue
         self.stdOutBuffer = stdOutBuffer
         self.stdErrBuffer = stdErrBuffer
-        self.createProcess = {
+        self.createProcess = CLICapture.createProcessGenerator(for: executable)
+    }
+    
+    private static func createProcessGenerator(for executable: URL) -> CreateProcess {
+        
+        return {
             (_ arguments: [String],
              _ environment: [String: String]?,
              _ currentDirectory: URL?,
-             _ standardInput: Any?) -> Process in
+             _ standardInput: Any?,
+             _ userInfo: [String: Any],
+             _ stackTrace: CLIStackTrace) -> Process in
+            
             
             let rtn = Process()
             rtn._cliCaptureExecutable = executable
@@ -251,6 +249,9 @@ open class CLICapture {
             }
             return rtn
         }
+        /*
+         
+         */
     }
     
     /// Method used to write data to the STD Out or outBuffer is set
@@ -288,22 +289,30 @@ open class CLICapture {
     ///   - currentDirectory: The current working directory to set
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - eventHandler: The event handler to pass Process events to
     /// - Returns: Returns the process being executed
     open func capture<ARGS, DATA>(arguments: ARGS,
-                                    environment: [String: String]? = nil,
-                                    currentDirectory: URL? = nil,
-                                    standardInput: Any? = nil,
-                                    outputOptions: CLIOutputOptions = .all,
-                                    runningEventHandlerOn: DispatchQueue? = nil,
-                                    eventHandler: @escaping CapturedProcessEventHandler<DATA>) throws -> Process
+                                  environment: [String: String]? = nil,
+                                  currentDirectory: URL? = nil,
+                                  standardInput: Any? = nil,
+                                  outputOptions: CLIOutputOptions = .all,
+                                  userInfo: [String: Any] = [:],
+                                  stackTrace: CLIStackTrace,
+                                  runningEventHandlerOn: DispatchQueue? = nil,
+                                  processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                  eventHandler: @escaping CapturedProcessEventHandler<DATA>) throws -> Process
     where ARGS: Sequence, ARGS.Element == String {
         
         let process = self.createProcess(((arguments as? [String]) ?? Array<String>(arguments)),
                               environment,
                               currentDirectory,
-                              standardInput)
+                              standardInput,
+                              userInfo,
+                              stackTrace)
         
         /*
         var cmd = process.executable!.path
@@ -337,17 +346,26 @@ open class CLICapture {
                                       process: process))
                 }
                 
+                processWroteToItsSTDOutput?(process, .out)
+                
                 outReadFinished = (err != 0 || (err == 0 && data.count == 0))
                 //print("Finished Read STD Out: \(errReadFinished)")
             }
         } else if !outputOptions.passthrough.contains(.out) {
-            #if os(macOS) || swift(>=5.0)
+            /*#if os(macOS) || swift(>=5.0)
             process.standardOutput = FileHandle.nullDevice
             #else
             let p = Pipe()
             pipes.append(p)
             process.standardOutput = p
-            #endif
+            #endif*/
+            let outPipe = Pipe()
+            pipes.append(outPipe)
+            process.standardOutput = outPipe
+            DispatchIO.continiousRead(from: outPipe,
+                                      runningHandlerOn: eventQueue) { data, err in
+                processWroteToItsSTDOutput?(process, .out)
+            }
         }
         
         
@@ -367,18 +385,26 @@ open class CLICapture {
                                       error: err,
                                       process: process))
                 }
-                
+                processWroteToItsSTDOutput?(process, .err)
                 errReadFinished = (err != 0 || (err == 0 && data.count == 0))
                 //print("Finished Read STD Err: \(errReadFinished)")
             }
         } else if !outputOptions.passthrough.contains(.err) {
-            #if os(macOS) || swift(>=5.0)
+            /*#if os(macOS) || swift(>=5.0)
             process.standardError = FileHandle.nullDevice
             #else
             let p = Pipe()
             pipes.append(p)
             process.standardError = p
-            #endif
+            #endif*/
+            let errPipe = Pipe()
+            pipes.append(errPipe)
+            process.standardError = errPipe
+            DispatchIO.continiousRead(from: errPipe,
+                                      runningHandlerOn: eventQueue) { data, err in
+                processWroteToItsSTDOutput?(process, .err)
+            }
+            
         }
             
         
@@ -412,7 +438,10 @@ open class CLICapture {
     ///   - currentDirectory: The current working directory to set
     ///   - standardInput: The standard input to set the core process
     ///   - passthrougOptions: The passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - callbackHandler: The handler to call when the process has finished
     /// - Returns: Returns the process being executed
     open func execute<ARGS>(arguments: ARGS,
@@ -420,7 +449,10 @@ open class CLICapture {
                             currentDirectory: URL? = nil,
                             standardInput: Any? = nil,
                             passthrougOptions: CLIPassthroughOptions = .all,
+                            userInfo: [String: Any] = [:],
+                            stackTrace: CLIStackTrace,
                             runningCallbackHandlerOn: DispatchQueue? = nil,
+                            processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                             callbackHandler: @escaping(_ sender: Process) -> Void) throws -> Process
         where ARGS: Sequence, ARGS.Element == String {
         
@@ -435,7 +467,10 @@ open class CLICapture {
                                 currentDirectory: currentDirectory,
                                 standardInput: standardInput,
                                 outputOptions: CLIOutputOptions.none + passthrougOptions,
+                                userInfo: userInfo,
+                                stackTrace: stackTrace.stacking(),
                                 runningEventHandlerOn: runningCallbackHandlerOn,
+                                processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                 eventHandler: emptyEventCapture)
     }
     
@@ -446,7 +481,10 @@ open class CLICapture {
     ///   - currentDirectory: The current working directory to set
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - eventHandler: The event handler to pass data events to
     ///   - responseParser: Closure used to parse data into CapturedResponse object
     ///   - callbackHandler: The closure to execute when capturing is finished with the CapturedResponse object
@@ -459,7 +497,10 @@ open class CLICapture {
                                                 currentDirectory: URL? = nil,
                                                 standardInput: Any? = nil,
                                                 outputOptions: CLIOutputOptions = .captureAll,
+                                                userInfo: [String: Any] = [:],
+                                                stackTrace: CLIStackTrace,
                                                 runningEventHandlerOn: DispatchQueue? = nil,
+                                                processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                                 eventHandler: @escaping CapturedOutputEventHandler<EventData>,
                                                 responseParser: @escaping (_ exitStatusCode: Int32,
                                                                            _ captureOptions: CLICaptureOptions,
@@ -496,7 +537,10 @@ open class CLICapture {
                               currentDirectory: currentDirectory,
                               standardInput: standardInput,
                               outputOptions: outputOptions,
+                              userInfo: userInfo,
+                              stackTrace: stackTrace.stacking(),
                               runningEventHandlerOn: runningEventHandlerOn,
+                              processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                               eventHandler: dataEventHandler)
     }
     
@@ -508,7 +552,10 @@ open class CLICapture {
     ///   - currentDirectory: The current working directory to set
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - eventHandler: The event handler to pass data events to
     ///   - responseType: The type of object to containd the captured response
     ///   - callbackHandler: The closure to execute when capturing is finished with the CapturedResponse object
@@ -520,7 +567,10 @@ open class CLICapture {
                                                 currentDirectory: URL? = nil,
                                                 standardInput: Any? = nil,
                                                 outputOptions: CLIOutputOptions = .captureAll,
+                                                userInfo: [String: Any] = [:],
+                                                stackTrace: CLIStackTrace,
                                                 runningEventHandlerOn: DispatchQueue? = nil,
+                                                processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                                 eventHandler: @escaping CapturedOutputEventHandler<EventData>,
                                                 withResponseType responseType: CapturedResponse.Type,
                                                 callbackHandler: @escaping (_ sender: Process,
@@ -539,13 +589,17 @@ open class CLICapture {
         }
                   
         return try self.captureResponse(arguments: arguments,
-                                      environment: environment,
-                                      currentDirectory: currentDirectory,
-                                      standardInput: standardInput,
-                                      outputOptions: outputOptions,
-                                      eventHandler: eventHandler,
-                                      responseParser: responseParser,
-                                      callbackHandler: callbackHandler)
+                                        environment: environment,
+                                        currentDirectory: currentDirectory,
+                                        standardInput: standardInput,
+                                        outputOptions: outputOptions,
+                                        userInfo: userInfo,
+                                        stackTrace: stackTrace.stacking(),
+                                        runningEventHandlerOn: runningEventHandlerOn,
+                                        processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                        eventHandler: eventHandler,
+                                        responseParser: responseParser,
+                                        callbackHandler: callbackHandler)
     }
     
     /// Execute core process and return the output as data events
@@ -555,7 +609,10 @@ open class CLICapture {
     ///   - currentDirectory: The current working directory to set
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - eventHandler: The event handler to pass data events to
     ///   - dataType: The type of data object to containd the captured response
     ///   - callbackHandler: The closure to execute when capturing is finished with the CLICapturedDataResponse object
@@ -567,7 +624,10 @@ open class CLICapture {
                                                 currentDirectory: URL? = nil,
                                                 standardInput: Any? = nil,
                                                 outputOptions: CLIOutputOptions = .captureAll,
+                                                userInfo: [String: Any] = [:],
+                                                stackTrace: CLIStackTrace,
                                                 runningEventHandlerOn: DispatchQueue? = nil,
+                                                processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                                 eventHandler: @escaping CapturedOutputEventHandler<EventData>,
                                                 withDataType dataType: ResponseData.Type,
                                                 callbackHandler: @escaping (_ sender: Process,
@@ -579,7 +639,10 @@ open class CLICapture {
                                         currentDirectory: currentDirectory,
                                         standardInput: standardInput,
                                         outputOptions: outputOptions,
+                                        userInfo: userInfo,
+                                        stackTrace: stackTrace.stacking(),
                                         runningEventHandlerOn: runningEventHandlerOn,
+                                        processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                         eventHandler: eventHandler,
                                         withResponseType: CLICapturedDataResponse<ResponseData>.self,
                                         callbackHandler: callbackHandler)
@@ -592,7 +655,10 @@ open class CLICapture {
     ///   - currentDirectory: The current working directory to set
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the cli process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - eventHandler: The event handler to pass data events to
     ///   - callbackHandler: The closure to execute when capturing is finished with the CLICapturedStringResponse object
     /// - Returns: Returns the process being executed
@@ -602,7 +668,10 @@ open class CLICapture {
                                                currentDirectory: URL? = nil,
                                                standardInput: Any? = nil,
                                                outputOptions: CLIOutputOptions = .captureAll,
+                                               userInfo: [String: Any] = [:],
+                                               stackTrace: CLIStackTrace,
                                                runningEventHandlerOn: DispatchQueue? = nil,
+                                               processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                                eventHandler: @escaping CapturedOutputEventHandler<EventData>,
                                                 callbackHandler: @escaping (_ sender: Process,
                                                                             _ response: CLICapturedStringResponse?,
@@ -614,13 +683,556 @@ open class CLICapture {
                                         currentDirectory: currentDirectory,
                                         standardInput: standardInput,
                                         outputOptions: outputOptions,
+                                        userInfo: userInfo,
+                                        stackTrace: stackTrace.stacking(),
                                         runningEventHandlerOn: runningEventHandlerOn,
+                                        processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                         eventHandler: eventHandler,
                                         withResponseType: CLICapturedStringResponse.self,
                                         callbackHandler: callbackHandler)
     
     }
 }
+
+#if swift(>=5.3)
+
+public extension CLICapture {
+    /// Execute the CLI process and capture output events
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass Process events to
+    /// - Returns: Returns the process being executed
+    func capture<ARGS, DATA>(arguments: ARGS,
+                             environment: [String: String]? = nil,
+                             currentDirectory: URL? = nil,
+                             standardInput: Any? = nil,
+                             outputOptions: CLIOutputOptions = .all,
+                             userInfo: [String: Any] = [:],
+                             filePath: StaticString = #filePath,
+                             function: StaticString = #function,
+                             line: UInt = #line,
+                             runningEventHandlerOn: DispatchQueue? = nil,
+                             processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                             eventHandler: @escaping CapturedProcessEventHandler<DATA>) throws -> Process
+    where ARGS: Sequence, ARGS.Element == String {
+        return try self.capture(arguments: arguments,
+                                environment: environment,
+                                currentDirectory: currentDirectory,
+                                standardInput: standardInput,
+                                outputOptions: outputOptions,
+                                userInfo: userInfo,
+                                stackTrace: .init(filePath: filePath, function: function, line: line),
+                                runningEventHandlerOn: runningEventHandlerOn,
+                                processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                eventHandler: eventHandler)
+    }
+    
+    /// Execute the core process
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - passthrougOptions: The passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - callbackHandler: The handler to call when the process has finished
+    /// - Returns: Returns the process being executed
+    func execute<ARGS>(arguments: ARGS,
+                       environment: [String: String]? = nil,
+                       currentDirectory: URL? = nil,
+                       standardInput: Any? = nil,
+                       passthrougOptions: CLIPassthroughOptions = .all,
+                       userInfo: [String: Any] = [:],
+                       filePath: StaticString = #filePath,
+                       function: StaticString = #function,
+                       line: UInt = #line,
+                       runningCallbackHandlerOn: DispatchQueue? = nil,
+                       processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                       callbackHandler: @escaping(_ sender: Process) -> Void) throws -> Process
+        where ARGS: Sequence, ARGS.Element == String {
+            return try self.execute(arguments: arguments,
+                                    environment: environment,
+                                    currentDirectory: currentDirectory,
+                                    standardInput: standardInput,
+                                    passthrougOptions: passthrougOptions,
+                                    userInfo: userInfo,
+                                    stackTrace: .init(filePath: filePath, function: function, line: line),
+                                    runningCallbackHandlerOn: runningCallbackHandlerOn,
+                                    processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                    callbackHandler: callbackHandler)
+    }
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - responseParser: Closure used to parse data into CapturedResponse object
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CapturedResponse object
+    /// - Returns: Returns the process being executed
+    func captureResponse<ARGS,
+                          EventData,
+                          CapturedData,
+                          CapturedResponse>(arguments: ARGS,
+                                            environment: [String: String]? = nil,
+                                            currentDirectory: URL? = nil,
+                                            standardInput: Any? = nil,
+                                            outputOptions: CLIOutputOptions = .captureAll,
+                                            userInfo: [String: Any] = [:],
+                                            filePath: StaticString = #filePath,
+                                            function: StaticString = #function,
+                                            line: UInt = #line,
+                                            runningEventHandlerOn: DispatchQueue? = nil,
+                                            processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                            eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                            responseParser: @escaping (_ exitStatusCode: Int32,
+                                                                       _ captureOptions: CLICaptureOptions,
+                                                                       _ capturedEvents: [CLICapturedOutputEvent<CapturedData>]) throws -> CapturedResponse,
+                                            callbackHandler: @escaping (_ sender: Process,
+                                                                            _ response: CapturedResponse?,
+                                                                            _ error: Swift.Error?) -> Void) throws -> Process
+        where ARGS: Sequence,
+              ARGS.Element == String {
+              return try self.captureResponse(arguments: arguments,
+                                              environment: environment,
+                                              currentDirectory: currentDirectory,
+                                              standardInput: standardInput,
+                                              outputOptions: outputOptions,
+                                              userInfo: userInfo,
+                                              stackTrace: .init(filePath: filePath, function: function, line: line),
+                                              runningEventHandlerOn: runningEventHandlerOn,
+                                              processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                              eventHandler: eventHandler,
+                                              responseParser: responseParser,
+                                              callbackHandler: callbackHandler)
+    }
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - responseType: The type of object to containd the captured response
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CapturedResponse object
+    /// - Returns: Returns the process being executed
+    func captureResponse<ARGS,
+                          EventData,
+                          CapturedResponse>(arguments: ARGS,
+                                            environment: [String: String]? = nil,
+                                            currentDirectory: URL? = nil,
+                                            standardInput: Any? = nil,
+                                            outputOptions: CLIOutputOptions = .captureAll,
+                                            userInfo: [String: Any] = [:],
+                                            filePath: StaticString = #filePath,
+                                            function: StaticString = #function,
+                                            line: UInt = #line,
+                                            runningEventHandlerOn: DispatchQueue? = nil,
+                                            processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                            eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                            withResponseType responseType: CapturedResponse.Type,
+                                            callbackHandler: @escaping (_ sender: Process,
+                                                                        _ response: CapturedResponse?,
+                                                                        _ error: Swift.Error?) -> Void) throws -> Process
+        where ARGS: Sequence,
+              ARGS.Element == String,
+              CapturedResponse: CLICapturedResponse {
+                  
+          return try self.captureResponse(arguments: arguments,
+                                          environment: environment,
+                                          currentDirectory: currentDirectory,
+                                          standardInput: standardInput,
+                                          outputOptions: outputOptions,
+                                          userInfo: userInfo,
+                                          stackTrace: .init(filePath: filePath, function: function, line: line),
+                                          runningEventHandlerOn: runningEventHandlerOn,
+                                          processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                          eventHandler: eventHandler,
+                                          withResponseType: responseType,
+                                          callbackHandler: callbackHandler)
+    }
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - dataType: The type of data object to containd the captured response
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CLICapturedDataResponse object
+    /// - Returns: Returns the process being executed
+    func captureDataResponse<ARGS,
+                              EventData,
+                              ResponseData>(arguments: ARGS,
+                                            environment: [String: String]? = nil,
+                                            currentDirectory: URL? = nil,
+                                            standardInput: Any? = nil,
+                                            outputOptions: CLIOutputOptions = .captureAll,
+                                            userInfo: [String: Any] = [:],
+                                            filePath: StaticString = #filePath,
+                                            function: StaticString = #function,
+                                            line: UInt = #line,
+                                            runningEventHandlerOn: DispatchQueue? = nil,
+                                            processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                            eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                            withDataType dataType: ResponseData.Type,
+                                            callbackHandler: @escaping (_ sender: Process,
+                                                                        _ response: CLICapturedDataResponse<ResponseData>?,
+                                                                        _ error: Swift.Error?) -> Void ) throws -> Process
+    where ARGS: Sequence, ARGS.Element == String {
+        return try self.captureDataResponse(arguments: arguments,
+                                            environment: environment,
+                                            currentDirectory: currentDirectory,
+                                            standardInput: standardInput,
+                                            outputOptions: outputOptions,
+                                            userInfo: userInfo,
+                                            stackTrace: .init(filePath: filePath, function: function, line: line),
+                                            runningEventHandlerOn: runningEventHandlerOn,
+                                            processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                            eventHandler: eventHandler,
+                                            withDataType: dataType,
+                                            callbackHandler: callbackHandler)
+    }
+    
+    
+    /// Execute core process and return the output as string objects
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the cli process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CLICapturedStringResponse object
+    /// - Returns: Returns the process being executed
+    func captureStringResponse<ARGS,
+                                EventData>(arguments: ARGS,
+                                           environment: [String: String]? = nil,
+                                           currentDirectory: URL? = nil,
+                                           standardInput: Any? = nil,
+                                           outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           filePath: StaticString = #filePath,
+                                           function: StaticString = #function,
+                                           line: UInt = #line,
+                                           runningEventHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                           eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                            callbackHandler: @escaping (_ sender: Process,
+                                                                        _ response: CLICapturedStringResponse?,
+                                                                        _ error: Swift.Error?) -> Void ) throws -> Process
+        where ARGS: Sequence, ARGS.Element == String {
+            return try self.captureStringResponse(arguments: arguments,
+                                                  environment: environment,
+                                                  currentDirectory: currentDirectory,
+                                                  standardInput: standardInput,
+                                                  outputOptions: outputOptions,
+                                                  userInfo: userInfo,
+                                                  stackTrace: .init(filePath: filePath, function: function, line: line),
+                                                  runningEventHandlerOn: runningEventHandlerOn,
+                                                  processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                                  eventHandler: eventHandler,
+                                                  callbackHandler: callbackHandler)
+    }
+}
+
+#else
+public extension CLICapture {
+    /// Execute the CLI process and capture output events
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass Process events to
+    /// - Returns: Returns the process being executed
+    func capture<ARGS, DATA>(arguments: ARGS,
+                             environment: [String: String]? = nil,
+                             currentDirectory: URL? = nil,
+                             standardInput: Any? = nil,
+                             outputOptions: CLIOutputOptions = .all,
+                             userInfo: [String: Any] = [:],
+                             filePath: StaticString = #file,
+                             function: StaticString = #function,
+                             line: UInt = #line,
+                             runningEventHandlerOn: DispatchQueue? = nil,
+                             processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                             eventHandler: @escaping CapturedProcessEventHandler<DATA>) throws -> Process
+    where ARGS: Sequence, ARGS.Element == String {
+        return try self.capture(arguments: arguments,
+                                environment: environment,
+                                currentDirectory: currentDirectory,
+                                standardInput: standardInput,
+                                outputOptions: outputOptions,
+                                userInfo: userInfo,
+                                stackTrace: .init(filePath: filePath, function: function, line: line),
+                                runningEventHandlerOn: runningEventHandlerOn,
+                                processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                eventHandler: eventHandler)
+    }
+    
+    /// Execute the core process
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - passthrougOptions: The passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - callbackHandler: The handler to call when the process has finished
+    /// - Returns: Returns the process being executed
+    func execute<ARGS>(arguments: ARGS,
+                       environment: [String: String]? = nil,
+                       currentDirectory: URL? = nil,
+                       standardInput: Any? = nil,
+                       passthrougOptions: CLIPassthroughOptions = .all,
+                       userInfo: [String: Any] = [:],
+                       filePath: StaticString = #file,
+                       function: StaticString = #function,
+                       line: UInt = #line,
+                       runningCallbackHandlerOn: DispatchQueue? = nil,
+                       processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                       callbackHandler: @escaping(_ sender: Process) -> Void) throws -> Process
+        where ARGS: Sequence, ARGS.Element == String {
+            return try self.execute(arguments: arguments,
+                                    environment: environment,
+                                    currentDirectory: currentDirectory,
+                                    standardInput: standardInput,
+                                    passthrougOptions: passthrougOptions,
+                                    userInfo: userInfo,
+                                    stackTrace: .init(filePath: filePath, function: function, line: line),
+                                    runningCallbackHandlerOn: runningCallbackHandlerOn,
+                                    processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                    callbackHandler: callbackHandler)
+    }
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - responseParser: Closure used to parse data into CapturedResponse object
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CapturedResponse object
+    /// - Returns: Returns the process being executed
+    func captureResponse<ARGS,
+                          EventData,
+                          CapturedData,
+                          CapturedResponse>(arguments: ARGS,
+                                            environment: [String: String]? = nil,
+                                            currentDirectory: URL? = nil,
+                                            standardInput: Any? = nil,
+                                            outputOptions: CLIOutputOptions = .captureAll,
+                                            userInfo: [String: Any] = [:],
+                                            filePath: StaticString = #file,
+                                            function: StaticString = #function,
+                                            line: UInt = #line,
+                                            runningEventHandlerOn: DispatchQueue? = nil,
+                                            processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                            eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                            responseParser: @escaping (_ exitStatusCode: Int32,
+                                                                       _ captureOptions: CLICaptureOptions,
+                                                                       _ capturedEvents: [CLICapturedOutputEvent<CapturedData>]) throws -> CapturedResponse,
+                                            callbackHandler: @escaping (_ sender: Process,
+                                                                            _ response: CapturedResponse?,
+                                                                            _ error: Swift.Error?) -> Void) throws -> Process
+        where ARGS: Sequence,
+              ARGS.Element == String {
+              return try self.captureResponse(arguments: arguments,
+                                              environment: environment,
+                                              currentDirectory: currentDirectory,
+                                              standardInput: standardInput,
+                                              outputOptions: outputOptions,
+                                              userInfo: userInfo,
+                                              stackTrace: .init(filePath: filePath, function: function, line: line),
+                                              runningEventHandlerOn: runningEventHandlerOn,
+                                              processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                              eventHandler: eventHandler,
+                                              responseParser: responseParser,
+                                              callbackHandler: callbackHandler)
+    }
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - responseType: The type of object to containd the captured response
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CapturedResponse object
+    /// - Returns: Returns the process being executed
+    func captureResponse<ARGS,
+                          EventData,
+                          CapturedResponse>(arguments: ARGS,
+                                            environment: [String: String]? = nil,
+                                            currentDirectory: URL? = nil,
+                                            standardInput: Any? = nil,
+                                            outputOptions: CLIOutputOptions = .captureAll,
+                                            userInfo: [String: Any] = [:],
+                                            filePath: StaticString = #file,
+                                            function: StaticString = #function,
+                                            line: UInt = #line,
+                                            runningEventHandlerOn: DispatchQueue? = nil,
+                                            processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                            eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                            withResponseType responseType: CapturedResponse.Type,
+                                            callbackHandler: @escaping (_ sender: Process,
+                                                                        _ response: CapturedResponse?,
+                                                                        _ error: Swift.Error?) -> Void) throws -> Process
+        where ARGS: Sequence,
+              ARGS.Element == String,
+              CapturedResponse: CLICapturedResponse {
+                  
+          return try self.captureResponse(arguments: arguments,
+                                          environment: environment,
+                                          currentDirectory: currentDirectory,
+                                          standardInput: standardInput,
+                                          outputOptions: outputOptions,
+                                          userInfo: userInfo,
+                                          stackTrace: .init(filePath: filePath, function: function, line: line),
+                                          runningEventHandlerOn: runningEventHandlerOn,
+                                          processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                          eventHandler: eventHandler,
+                                          withResponseType: responseType,
+                                          callbackHandler: callbackHandler)
+    }
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - dataType: The type of data object to containd the captured response
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CLICapturedDataResponse object
+    /// - Returns: Returns the process being executed
+    func captureDataResponse<ARGS,
+                              EventData,
+                              ResponseData>(arguments: ARGS,
+                                            environment: [String: String]? = nil,
+                                            currentDirectory: URL? = nil,
+                                            standardInput: Any? = nil,
+                                            outputOptions: CLIOutputOptions = .captureAll,
+                                            userInfo: [String: Any] = [:],
+                                            filePath: StaticString = #file,
+                                            function: StaticString = #function,
+                                            line: UInt = #line,
+                                            runningEventHandlerOn: DispatchQueue? = nil,
+                                            processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                            eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                            withDataType dataType: ResponseData.Type,
+                                            callbackHandler: @escaping (_ sender: Process,
+                                                                        _ response: CLICapturedDataResponse<ResponseData>?,
+                                                                        _ error: Swift.Error?) -> Void ) throws -> Process
+    where ARGS: Sequence, ARGS.Element == String {
+        return try self.captureDataResponse(arguments: arguments,
+                                            environment: environment,
+                                            currentDirectory: currentDirectory,
+                                            standardInput: standardInput,
+                                            outputOptions: outputOptions,
+                                            userInfo: userInfo,
+                                            stackTrace: .init(filePath: filePath, function: function, line: line),
+                                            runningEventHandlerOn: runningEventHandlerOn,
+                                            processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                            eventHandler: eventHandler,
+                                            withDataType: dataType,
+                                            callbackHandler: callbackHandler)
+    }
+    
+    
+    /// Execute core process and return the output as string objects
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the cli process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CLICapturedStringResponse object
+    /// - Returns: Returns the process being executed
+    func captureStringResponse<ARGS,
+                                EventData>(arguments: ARGS,
+                                           environment: [String: String]? = nil,
+                                           currentDirectory: URL? = nil,
+                                           standardInput: Any? = nil,
+                                           outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           filePath: StaticString = #file,
+                                           function: StaticString = #function,
+                                           line: UInt = #line,
+                                           runningEventHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                           eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                            callbackHandler: @escaping (_ sender: Process,
+                                                                        _ response: CLICapturedStringResponse?,
+                                                                        _ error: Swift.Error?) -> Void ) throws -> Process
+        where ARGS: Sequence, ARGS.Element == String {
+            return try self.captureStringResponse(arguments: arguments,
+                                                  environment: environment,
+                                                  currentDirectory: currentDirectory,
+                                                  standardInput: standardInput,
+                                                  outputOptions: outputOptions,
+                                                  userInfo: userInfo,
+                                                  stackTrace: .init(filePath: filePath, function: function, line: line),
+                                                  runningEventHandlerOn: runningEventHandlerOn,
+                                                  processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                                  eventHandler: eventHandler,
+                                                  callbackHandler: callbackHandler)
+    }
+}
+#endif
 
 // MARK: Without 'eventHandler' Parameter(s)
 
@@ -632,7 +1244,10 @@ public extension CLICapture {
     ///   - currentDirectory: The current working directory to set
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - responseParser: Closure used to parse data into CapturedResponse object
     ///   - callbackHandler: The closure to execute when capturing is finished with the CapturedResponse object
     /// - Returns: Returns the process being executed
@@ -643,7 +1258,10 @@ public extension CLICapture {
                                            currentDirectory: URL? = nil,
                                            standardInput: Any? = nil,
                                            outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           stackTrace: CLIStackTrace,
                                            runningCallbackHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                            responseParser: @escaping (_ exitStatusCode: Int32,
                                                                       _ captureOptions: CLICaptureOptions,
                                                                       _ capturedEvents: [CLICapturedOutputEvent<CapturedData>]) throws -> CapturedResponse,
@@ -660,7 +1278,10 @@ public extension CLICapture {
                                               currentDirectory: currentDirectory,
                                               standardInput: standardInput,
                                               outputOptions: outputOptions,
+                                              userInfo: userInfo,
+                                              stackTrace: stackTrace.stacking(),
                                               runningEventHandlerOn: runningCallbackHandlerOn,
+                                              processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                               eventHandler: eventHandler,
                                               responseParser: responseParser,
                                               callbackHandler: callbackHandler)
@@ -675,7 +1296,10 @@ public extension CLICapture {
     ///   - currentDirectory: The current working directory to set
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - responseType: The type of object to containd the captured response
     ///   - callbackHandler: The closure to execute when capturing is finished with the CapturedResponse object
     /// - Returns: Returns the process being executed
@@ -685,7 +1309,10 @@ public extension CLICapture {
                                            currentDirectory: URL? = nil,
                                            standardInput: Any? = nil,
                                            outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           stackTrace: CLIStackTrace,
                                            runningCallbackHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                            withResponseType responseType: CapturedResponse.Type,
                                            callbackHandler: @escaping (_ sender: Process,
                                                                        _ response: CapturedResponse?,
@@ -701,7 +1328,10 @@ public extension CLICapture {
                                           currentDirectory: currentDirectory,
                                           standardInput: standardInput,
                                           outputOptions: outputOptions,
+                                          userInfo: userInfo,
+                                          stackTrace: stackTrace.stacking(),
                                           runningEventHandlerOn: runningCallbackHandlerOn,
+                                          processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                           eventHandler: eventHandler,
                                           withResponseType: responseType,
                                           callbackHandler: callbackHandler)
@@ -714,7 +1344,10 @@ public extension CLICapture {
     ///   - currentDirectory: The current working directory to set
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - dataType: The type of data object to containd the captured response
     ///   - callbackHandler: The closure to execute when capturing is finished with the CLICapturedDataResponse object
     /// - Returns: Returns the process being executed
@@ -724,7 +1357,10 @@ public extension CLICapture {
                                            currentDirectory: URL? = nil,
                                            standardInput: Any? = nil,
                                            outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           stackTrace: CLIStackTrace,
                                            runningCallbackHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                            withDataType dataType: ResponseData.Type,
                                            callbackHandler: @escaping (_ sender: Process,
                                                                        _ response: CLICapturedDataResponse<ResponseData>?,
@@ -737,7 +1373,10 @@ public extension CLICapture {
                                             currentDirectory: currentDirectory,
                                             standardInput: standardInput,
                                             outputOptions: outputOptions,
+                                            userInfo: userInfo,
+                                            stackTrace: stackTrace.stacking(),
                                             runningEventHandlerOn: runningCallbackHandlerOn,
+                                            processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                             eventHandler: eventHandler,
                                             withDataType: dataType,
                                             callbackHandler: callbackHandler)
@@ -750,7 +1389,10 @@ public extension CLICapture {
     ///   - currentDirectory: The current working directory to set
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the cli process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - callbackHandler: The closure to execute when capturing is finished with the CLICapturedStringResponse object
     /// - Returns: Returns the process being executed
     func captureStringResponse<ARGS>(arguments: ARGS,
@@ -758,7 +1400,10 @@ public extension CLICapture {
                                      currentDirectory: URL? = nil,
                                      standardInput: Any? = nil,
                                      outputOptions: CLIOutputOptions = .captureAll,
+                                     userInfo: [String: Any] = [:],
+                                     stackTrace: CLIStackTrace,
                                      runningCallbackHandlerOn: DispatchQueue? = nil,
+                                     processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                      callbackHandler: @escaping (_ sender: Process,
                                                                  _ response: CLICapturedStringResponse?,
                                                                  _ error: Swift.Error?) -> Void ) throws -> Process
@@ -771,12 +1416,381 @@ public extension CLICapture {
                                                 currentDirectory: currentDirectory,
                                                 standardInput: standardInput,
                                                 outputOptions: outputOptions,
+                                                  userInfo: userInfo,
+                                                  stackTrace: stackTrace.stacking(),
                                                 runningEventHandlerOn: runningCallbackHandlerOn,
+                                                  processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                                 eventHandler: eventHandler,
                                                 callbackHandler: callbackHandler)
     
     }
 }
+
+#if swift(>=5.3)
+public extension CLICapture {
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - responseParser: Closure used to parse data into CapturedResponse object
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CapturedResponse object
+    /// - Returns: Returns the process being executed
+    func captureResponse<ARGS,
+                         CapturedData,
+                         CapturedResponse>(arguments: ARGS,
+                                           environment: [String: String]? = nil,
+                                           currentDirectory: URL? = nil,
+                                           standardInput: Any? = nil,
+                                           outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           filePath: StaticString = #filePath,
+                                           function: StaticString = #function,
+                                           line: UInt = #line,
+                                           runningCallbackHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                           responseParser: @escaping (_ exitStatusCode: Int32,
+                                                                      _ captureOptions: CLICaptureOptions,
+                                                                      _ capturedEvents: [CLICapturedOutputEvent<CapturedData>]) throws -> CapturedResponse,
+                                           callbackHandler: @escaping (_ sender: Process,
+                                                                       _ response: CapturedResponse?,
+                                                                       _ error: Swift.Error?) -> Void) throws -> Process
+    where ARGS: Sequence,
+          ARGS.Element == String {
+                  
+              return try self.captureResponse(arguments: arguments,
+                                              environment: environment,
+                                              currentDirectory: currentDirectory,
+                                              standardInput: standardInput,
+                                              outputOptions: outputOptions,
+                                              userInfo: userInfo,
+                                              stackTrace: .init(filePath: filePath, function: function, line: line),
+                                              runningCallbackHandlerOn: runningCallbackHandlerOn,
+                                              processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                              responseParser: responseParser,
+                                              callbackHandler: callbackHandler)
+      
+    }
+    
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - responseType: The type of object to containd the captured response
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CapturedResponse object
+    /// - Returns: Returns the process being executed
+    func captureResponse<ARGS,
+                         CapturedResponse>(arguments: ARGS,
+                                           environment: [String: String]? = nil,
+                                           currentDirectory: URL? = nil,
+                                           standardInput: Any? = nil,
+                                           outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           filePath: StaticString = #filePath,
+                                           function: StaticString = #function,
+                                           line: UInt = #line,
+                                           runningCallbackHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                           withResponseType responseType: CapturedResponse.Type,
+                                           callbackHandler: @escaping (_ sender: Process,
+                                                                       _ response: CapturedResponse?,
+                                                                       _ error: Swift.Error?) -> Void) throws -> Process
+        where ARGS: Sequence,
+              ARGS.Element == String,
+              CapturedResponse: CLICapturedResponse {
+                  
+          return try self.captureResponse(arguments: arguments,
+                                          environment: environment,
+                                          currentDirectory: currentDirectory,
+                                          standardInput: standardInput,
+                                          outputOptions: outputOptions,
+                                          userInfo: userInfo,
+                                          stackTrace: .init(filePath: filePath, function: function, line: line),
+                                          runningCallbackHandlerOn: runningCallbackHandlerOn,
+                                          processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                          withResponseType: responseType,
+                                          callbackHandler: callbackHandler)
+    }
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - dataType: The type of data object to containd the captured response
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CLICapturedDataResponse object
+    /// - Returns: Returns the process being executed
+    func captureDataResponse<ARGS,
+                             ResponseData>(arguments: ARGS,
+                                           environment: [String: String]? = nil,
+                                           currentDirectory: URL? = nil,
+                                           standardInput: Any? = nil,
+                                           outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           filePath: StaticString = #filePath,
+                                           function: StaticString = #function,
+                                           line: UInt = #line,
+                                           runningCallbackHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                           withDataType dataType: ResponseData.Type,
+                                           callbackHandler: @escaping (_ sender: Process,
+                                                                       _ response: CLICapturedDataResponse<ResponseData>?,
+                                                                        _ error: Swift.Error?) -> Void ) throws -> Process
+    where ARGS: Sequence, ARGS.Element == String {
+        return try self.captureDataResponse(arguments: arguments,
+                                            environment: environment,
+                                            currentDirectory: currentDirectory,
+                                            standardInput: standardInput,
+                                            outputOptions: outputOptions,
+                                            userInfo: userInfo,
+                                            stackTrace: .init(filePath: filePath, function: function, line: line),
+                                            runningCallbackHandlerOn: runningCallbackHandlerOn,
+                                            processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                            withDataType: dataType,
+                                            callbackHandler: callbackHandler)
+    }
+    
+    /// Execute core process and return the output as string objects
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the cli process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CLICapturedStringResponse object
+    /// - Returns: Returns the process being executed
+    func captureStringResponse<ARGS>(arguments: ARGS,
+                                     environment: [String: String]? = nil,
+                                     currentDirectory: URL? = nil,
+                                     standardInput: Any? = nil,
+                                     outputOptions: CLIOutputOptions = .captureAll,
+                                     userInfo: [String: Any] = [:],
+                                     filePath: StaticString = #filePath,
+                                     function: StaticString = #function,
+                                     line: UInt = #line,
+                                     runningCallbackHandlerOn: DispatchQueue? = nil,
+                                     processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                     callbackHandler: @escaping (_ sender: Process,
+                                                                 _ response: CLICapturedStringResponse?,
+                                                                 _ error: Swift.Error?) -> Void ) throws -> Process
+        where ARGS: Sequence, ARGS.Element == String {
+            
+        return try self.captureStringResponse(arguments: arguments,
+                                              environment: environment,
+                                              currentDirectory: currentDirectory,
+                                              standardInput: standardInput,
+                                              outputOptions: outputOptions,
+                                              userInfo: userInfo,
+                                              stackTrace: .init(filePath: filePath, function: function, line: line),
+                                              runningCallbackHandlerOn: runningCallbackHandlerOn,
+                                              processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                              callbackHandler: callbackHandler)
+    
+    }
+}
+#else
+public extension CLICapture {
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - responseParser: Closure used to parse data into CapturedResponse object
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CapturedResponse object
+    /// - Returns: Returns the process being executed
+    func captureResponse<ARGS,
+                         CapturedData,
+                         CapturedResponse>(arguments: ARGS,
+                                           environment: [String: String]? = nil,
+                                           currentDirectory: URL? = nil,
+                                           standardInput: Any? = nil,
+                                           outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           filePath: StaticString = #file,
+                                           function: StaticString = #function,
+                                           line: UInt = #line,
+                                           runningCallbackHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                           responseParser: @escaping (_ exitStatusCode: Int32,
+                                                                      _ captureOptions: CLICaptureOptions,
+                                                                      _ capturedEvents: [CLICapturedOutputEvent<CapturedData>]) throws -> CapturedResponse,
+                                           callbackHandler: @escaping (_ sender: Process,
+                                                                       _ response: CapturedResponse?,
+                                                                       _ error: Swift.Error?) -> Void) throws -> Process
+    where ARGS: Sequence,
+          ARGS.Element == String {
+                  
+              return try self.captureResponse(arguments: arguments,
+                                              environment: environment,
+                                              currentDirectory: currentDirectory,
+                                              standardInput: standardInput,
+                                              outputOptions: outputOptions,
+                                              userInfo: userInfo,
+                                              stackTrace: .init(filePath: filePath, function: function, line: line),
+                                              runningCallbackHandlerOn: runningCallbackHandlerOn,
+                                              processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                              responseParser: responseParser,
+                                              callbackHandler: callbackHandler)
+      
+    }
+    
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - responseType: The type of object to containd the captured response
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CapturedResponse object
+    /// - Returns: Returns the process being executed
+    func captureResponse<ARGS,
+                         CapturedResponse>(arguments: ARGS,
+                                           environment: [String: String]? = nil,
+                                           currentDirectory: URL? = nil,
+                                           standardInput: Any? = nil,
+                                           outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           filePath: StaticString = #file,
+                                           function: StaticString = #function,
+                                           line: UInt = #line,
+                                           runningCallbackHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                           withResponseType responseType: CapturedResponse.Type,
+                                           callbackHandler: @escaping (_ sender: Process,
+                                                                       _ response: CapturedResponse?,
+                                                                       _ error: Swift.Error?) -> Void) throws -> Process
+        where ARGS: Sequence,
+              ARGS.Element == String,
+              CapturedResponse: CLICapturedResponse {
+                  
+          return try self.captureResponse(arguments: arguments,
+                                          environment: environment,
+                                          currentDirectory: currentDirectory,
+                                          standardInput: standardInput,
+                                          outputOptions: outputOptions,
+                                          userInfo: userInfo,
+                                          stackTrace: .init(filePath: filePath, function: function, line: line),
+                                          runningCallbackHandlerOn: runningCallbackHandlerOn,
+                                          processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                          withResponseType: responseType,
+                                          callbackHandler: callbackHandler)
+    }
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - dataType: The type of data object to containd the captured response
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CLICapturedDataResponse object
+    /// - Returns: Returns the process being executed
+    func captureDataResponse<ARGS,
+                             ResponseData>(arguments: ARGS,
+                                           environment: [String: String]? = nil,
+                                           currentDirectory: URL? = nil,
+                                           standardInput: Any? = nil,
+                                           outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           filePath: StaticString = #file,
+                                           function: StaticString = #function,
+                                           line: UInt = #line,
+                                           runningCallbackHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                           withDataType dataType: ResponseData.Type,
+                                           callbackHandler: @escaping (_ sender: Process,
+                                                                       _ response: CLICapturedDataResponse<ResponseData>?,
+                                                                        _ error: Swift.Error?) -> Void ) throws -> Process
+    where ARGS: Sequence, ARGS.Element == String {
+        return try self.captureDataResponse(arguments: arguments,
+                                            environment: environment,
+                                            currentDirectory: currentDirectory,
+                                            standardInput: standardInput,
+                                            outputOptions: outputOptions,
+                                            userInfo: userInfo,
+                                            stackTrace: .init(filePath: filePath, function: function, line: line),
+                                            runningCallbackHandlerOn: runningCallbackHandlerOn,
+                                            processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                            withDataType: dataType,
+                                            callbackHandler: callbackHandler)
+    }
+    
+    /// Execute core process and return the output as string objects
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the cli process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CLICapturedStringResponse object
+    /// - Returns: Returns the process being executed
+    func captureStringResponse<ARGS>(arguments: ARGS,
+                                     environment: [String: String]? = nil,
+                                     currentDirectory: URL? = nil,
+                                     standardInput: Any? = nil,
+                                     outputOptions: CLIOutputOptions = .captureAll,
+                                     userInfo: [String: Any] = [:],
+                                     filePath: StaticString = #file,
+                                     function: StaticString = #function,
+                                     line: UInt = #line,
+                                     runningCallbackHandlerOn: DispatchQueue? = nil,
+                                     processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                     callbackHandler: @escaping (_ sender: Process,
+                                                                 _ response: CLICapturedStringResponse?,
+                                                                 _ error: Swift.Error?) -> Void ) throws -> Process
+        where ARGS: Sequence, ARGS.Element == String {
+            
+        return try self.captureStringResponse(arguments: arguments,
+                                              environment: environment,
+                                              currentDirectory: currentDirectory,
+                                              standardInput: standardInput,
+                                              outputOptions: outputOptions,
+                                              userInfo: userInfo,
+                                              stackTrace: .init(filePath: filePath, function: function, line: line),
+                                              runningCallbackHandlerOn: runningCallbackHandlerOn,
+                                              processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                              callbackHandler: callbackHandler)
+    
+    }
+}
+#endif
 
 // MARK: Without 'arguments' Parameter
 public extension CLICapture {
@@ -787,21 +1801,30 @@ public extension CLICapture {
     ///   - currentDirectory: The current working directory to set
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - eventHandler: The event handler to pass data events to
     /// - Returns: Returns the process being executed
     func capture<DATA>(environment: [String: String]? = nil,
                        currentDirectory: URL? = nil,
                        standardInput: Any? = nil,
                        outputOptions: CLIOutputOptions = .all,
+                       userInfo: [String: Any] = [:],
+                       stackTrace: CLIStackTrace,
                        runningEventHandlerOn: DispatchQueue? = nil,
+                       processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                        eventHandler: @escaping CapturedProcessEventHandler<DATA>) throws -> Process {
         return try self.capture(arguments: Array<String>(),
                                 environment: environment,
                                 currentDirectory: currentDirectory,
                                 standardInput: standardInput,
                                 outputOptions: outputOptions,
+                                userInfo: userInfo,
+                                stackTrace: stackTrace.stacking(),
                                 runningEventHandlerOn: runningEventHandlerOn,
+                                processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                 eventHandler: eventHandler)
     }
     
@@ -811,21 +1834,30 @@ public extension CLICapture {
     ///   - currentDirectory: The current working directory to set
     ///   - standardInput: The standard input to set the core process
     ///   - passthrougOptions: The passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - callbackHandler: The handler to call when the process has finished
     /// - Returns: Returns the process being executed
     func execute(environment: [String: String]? = nil,
                  currentDirectory: URL? = nil,
                  standardInput: Any? = nil,
                  passthrougOptions: CLIPassthroughOptions = .all,
+                 userInfo: [String: Any] = [:],
+                 stackTrace: CLIStackTrace,
                  runningCallbackHandlerOn: DispatchQueue? = nil,
+                 processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                  callbackHandler: @escaping(_ sender: Process) -> Void) throws -> Process {
         return try self.execute(arguments: Array<String>(),
                                 environment: environment,
                                 currentDirectory: currentDirectory,
                                 standardInput: standardInput,
                                 passthrougOptions: passthrougOptions,
+                                userInfo: userInfo,
+                                stackTrace: stackTrace.stacking(),
                                 runningCallbackHandlerOn: runningCallbackHandlerOn,
+                                processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                 callbackHandler: callbackHandler)
     }
     
@@ -835,7 +1867,10 @@ public extension CLICapture {
     ///   - currentDirectory: The current working directory to set
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - eventHandler: The event handler to pass data events to
     ///   - responseParser: Closure used to parse data into CapturedResponse object
     ///   - callbackHandler: The closure to execute when capturing is finished with the CapturedResponse object
@@ -846,7 +1881,10 @@ public extension CLICapture {
                                            currentDirectory: URL? = nil,
                                            standardInput: Any? = nil,
                                            outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           stackTrace: CLIStackTrace,
                                            runningEventHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                            eventHandler: @escaping CapturedOutputEventHandler<EventData>,
                                            responseParser: @escaping (_ exitStatusCode: Int32,
                                                                       _ captureOptions: CLICaptureOptions,
@@ -860,7 +1898,10 @@ public extension CLICapture {
                                         currentDirectory: currentDirectory,
                                         standardInput: standardInput,
                                         outputOptions: outputOptions,
+                                        userInfo: userInfo,
+                                        stackTrace: stackTrace.stacking(),
                                         runningEventHandlerOn: runningEventHandlerOn,
+                                        processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                         eventHandler: eventHandler,
                                         responseParser: responseParser,
                                         callbackHandler: callbackHandler)
@@ -874,7 +1915,10 @@ public extension CLICapture {
     ///   - currentDirectory: The current working directory to set
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - eventHandler: The event handler to pass data events to
     ///   - responseType: The type of object to containd the captured response
     ///   - callbackHandler: The closure to execute when capturing is finished with the CapturedResponse object
@@ -884,7 +1928,10 @@ public extension CLICapture {
                                            currentDirectory: URL? = nil,
                                            standardInput: Any? = nil,
                                            outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           stackTrace: CLIStackTrace,
                                            runningEventHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                            eventHandler: @escaping CapturedOutputEventHandler<EventData>,
                                            withResponseType responseType: CapturedResponse.Type,
                                            callbackHandler: @escaping (_ sender: Process,
@@ -897,7 +1944,10 @@ public extension CLICapture {
                                         currentDirectory: currentDirectory,
                                         standardInput: standardInput,
                                         outputOptions: outputOptions,
+                                        userInfo: userInfo,
+                                        stackTrace: stackTrace.stacking(),
                                         runningEventHandlerOn: runningEventHandlerOn,
+                                        processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                         eventHandler: eventHandler,
                                         withResponseType: responseType,
                                         callbackHandler: callbackHandler)
@@ -909,7 +1959,10 @@ public extension CLICapture {
     ///   - currentDirectory: The current working directory to set
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - eventHandler: The event handler to pass data events to
     ///   - dataType: The type of data object to containd the captured response
     ///   - callbackHandler: The closure to execute when capturing is finished with the CLICapturedDataResponse object
@@ -919,7 +1972,10 @@ public extension CLICapture {
                                            currentDirectory: URL? = nil,
                                            standardInput: Any? = nil,
                                            outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           stackTrace: CLIStackTrace,
                                            runningEventHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                            eventHandler: @escaping CapturedOutputEventHandler<EventData>,
                                            withDataType dataType: ResponseData.Type,
                                            callbackHandler: @escaping (_ sender: Process,
@@ -930,7 +1986,10 @@ public extension CLICapture {
                                             currentDirectory: currentDirectory,
                                             standardInput: standardInput,
                                             outputOptions: outputOptions,
+                                            userInfo: userInfo,
+                                            stackTrace: stackTrace.stacking(),
                                             runningEventHandlerOn: runningEventHandlerOn,
+                                            processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                             eventHandler: eventHandler,
                                             withDataType: dataType,
                                             callbackHandler: callbackHandler)
@@ -942,7 +2001,10 @@ public extension CLICapture {
     ///   - currentDirectory: The current working directory to set
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the cli process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - eventHandler: The event handler to pass data events to
     ///   - callbackHandler: The closure to execute when capturing is finished with the CLICapturedStringResponse object
     /// - Returns: Returns the process being executed
@@ -950,7 +2012,10 @@ public extension CLICapture {
                                           currentDirectory: URL? = nil,
                                           standardInput: Any? = nil,
                                           outputOptions: CLIOutputOptions = .captureAll,
+                                          userInfo: [String: Any] = [:],
+                                          stackTrace: CLIStackTrace,
                                           runningEventHandlerOn: DispatchQueue? = nil,
+                                          processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                           eventHandler: @escaping CapturedOutputEventHandler<EventData>,
                                           callbackHandler: @escaping (_ sender: Process,
                                                                       _ response: CLICapturedStringResponse?,
@@ -961,13 +2026,506 @@ public extension CLICapture {
                                               currentDirectory: currentDirectory,
                                               standardInput: standardInput,
                                               outputOptions: outputOptions,
+                                              userInfo: userInfo,
+                                              stackTrace: stackTrace.stacking(),
                                               runningEventHandlerOn: runningEventHandlerOn,
+                                              processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                               eventHandler: eventHandler,
                                               callbackHandler: callbackHandler)
     
     }
     
 }
+
+#if swift(>=5.3)
+public extension CLICapture {
+    
+    /// Execute the CLI process and capture output events
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    /// - Returns: Returns the process being executed
+    func capture<DATA>(environment: [String: String]? = nil,
+                       currentDirectory: URL? = nil,
+                       standardInput: Any? = nil,
+                       outputOptions: CLIOutputOptions = .all,
+                       userInfo: [String: Any] = [:],
+                       filePath: StaticString = #filePath,
+                       function: StaticString = #function,
+                       line: UInt = #line,
+                       runningEventHandlerOn: DispatchQueue? = nil,
+                       processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                       eventHandler: @escaping CapturedProcessEventHandler<DATA>) throws -> Process {
+        return try self.capture(environment: environment,
+                                currentDirectory: currentDirectory,
+                                standardInput: standardInput,
+                                outputOptions: outputOptions,
+                                userInfo: userInfo,
+                                stackTrace: .init(filePath: filePath, function: function, line: line),
+                                runningEventHandlerOn: runningEventHandlerOn,
+                                processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                eventHandler: eventHandler)
+    }
+    
+    /// Execute the core process
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - passthrougOptions: The passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - callbackHandler: The handler to call when the process has finished
+    /// - Returns: Returns the process being executed
+    func execute(environment: [String: String]? = nil,
+                 currentDirectory: URL? = nil,
+                 standardInput: Any? = nil,
+                 passthrougOptions: CLIPassthroughOptions = .all,
+                 userInfo: [String: Any] = [:],
+                 filePath: StaticString = #filePath,
+                 function: StaticString = #function,
+                 line: UInt = #line,
+                 runningCallbackHandlerOn: DispatchQueue? = nil,
+                 processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                 callbackHandler: @escaping(_ sender: Process) -> Void) throws -> Process {
+        return try self.execute(environment: environment,
+                                currentDirectory: currentDirectory,
+                                standardInput: standardInput,
+                                passthrougOptions: passthrougOptions,
+                                userInfo: userInfo,
+                                stackTrace: .init(filePath: filePath, function: function, line: line),
+                                runningCallbackHandlerOn: runningCallbackHandlerOn,
+                                processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                callbackHandler: callbackHandler)
+    }
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - responseParser: Closure used to parse data into CapturedResponse object
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CapturedResponse object
+    /// - Returns: Returns the process being executed
+    func captureResponse<EventData,
+                         CapturedData,
+                         CapturedResponse>(environment: [String: String]? = nil,
+                                           currentDirectory: URL? = nil,
+                                           standardInput: Any? = nil,
+                                           outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           filePath: StaticString = #filePath,
+                                           function: StaticString = #function,
+                                           line: UInt = #line,
+                                           runningEventHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                           eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                           responseParser: @escaping (_ exitStatusCode: Int32,
+                                                                      _ captureOptions: CLICaptureOptions,
+                                                                      _ capturedEvents: [CLICapturedOutputEvent<CapturedData>]) throws -> CapturedResponse,
+                                           callbackHandler: @escaping (_ sender: Process,
+                                                                       _ response: CapturedResponse?,
+                                                                       _ error: Swift.Error?) -> Void) throws -> Process {
+                  
+        return try self.captureResponse(environment: environment,
+                                        currentDirectory: currentDirectory,
+                                        standardInput: standardInput,
+                                        outputOptions: outputOptions,
+                                        userInfo: userInfo,
+                                        stackTrace: .init(filePath: filePath, function: function, line: line),
+                                        runningEventHandlerOn: runningEventHandlerOn,
+                                        processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                        eventHandler: eventHandler,
+                                        responseParser: responseParser,
+                                        callbackHandler: callbackHandler)
+        
+    }
+    
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - responseType: The type of object to containd the captured response
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CapturedResponse object
+    /// - Returns: Returns the process being executed
+    func captureResponse<EventData,
+                         CapturedResponse>(environment: [String: String]? = nil,
+                                           currentDirectory: URL? = nil,
+                                           standardInput: Any? = nil,
+                                           outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           filePath: StaticString = #filePath,
+                                           function: StaticString = #function,
+                                           line: UInt = #line,
+                                           runningEventHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                           eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                           withResponseType responseType: CapturedResponse.Type,
+                                           callbackHandler: @escaping (_ sender: Process,
+                                                                       _ response: CapturedResponse?,
+                                                                       _ error: Swift.Error?) -> Void) throws -> Process
+        where CapturedResponse: CLICapturedResponse {
+                  
+            return try self.captureResponse(environment: environment,
+                                            currentDirectory: currentDirectory,
+                                            standardInput: standardInput,
+                                            outputOptions: outputOptions,
+                                            userInfo: userInfo,
+                                            stackTrace: .init(filePath: filePath, function: function, line: line),
+                                            runningEventHandlerOn: runningEventHandlerOn,
+                                            processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                            eventHandler: eventHandler,
+                                            withResponseType: responseType,
+                                            callbackHandler: callbackHandler)
+    }
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - dataType: The type of data object to containd the captured response
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CLICapturedDataResponse object
+    /// - Returns: Returns the process being executed
+    func captureDataResponse<EventData,
+                             ResponseData>(environment: [String: String]? = nil,
+                                           currentDirectory: URL? = nil,
+                                           standardInput: Any? = nil,
+                                           outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           filePath: StaticString = #filePath,
+                                           function: StaticString = #function,
+                                           line: UInt = #line,
+                                           runningEventHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                           eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                           withDataType dataType: ResponseData.Type,
+                                           callbackHandler: @escaping (_ sender: Process,
+                                                                       _ response: CLICapturedDataResponse<ResponseData>?,
+                                                                       _ error: Swift.Error?) -> Void ) throws -> Process {
+        return try self.captureDataResponse(environment: environment,
+                                        currentDirectory: currentDirectory,
+                                        standardInput: standardInput,
+                                        outputOptions: outputOptions,
+                                        userInfo: userInfo,
+                                        stackTrace: .init(filePath: filePath, function: function, line: line),
+                                        runningEventHandlerOn: runningEventHandlerOn,
+                                            processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                        eventHandler: eventHandler,
+                                            withDataType: dataType,
+                                        callbackHandler: callbackHandler)
+    }
+    
+    /// Execute core process and return the output as string objects
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the cli process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CLICapturedStringResponse object
+    /// - Returns: Returns the process being executed
+    func captureStringResponse<EventData>(environment: [String: String]? = nil,
+                                          currentDirectory: URL? = nil,
+                                          standardInput: Any? = nil,
+                                          outputOptions: CLIOutputOptions = .captureAll,
+                                          userInfo: [String: Any] = [:],
+                                          filePath: StaticString = #filePath,
+                                          function: StaticString = #function,
+                                          line: UInt = #line,
+                                          runningEventHandlerOn: DispatchQueue? = nil,
+                                          processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                          eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                          callbackHandler: @escaping (_ sender: Process,
+                                                                      _ response: CLICapturedStringResponse?,
+                                                                      _ error: Swift.Error?) -> Void ) throws -> Process {
+            
+        return try self.captureStringResponse(environment: environment,
+                                              currentDirectory: currentDirectory,
+                                              standardInput: standardInput,
+                                              outputOptions: outputOptions,
+                                              userInfo: userInfo,
+                                              stackTrace: .init(filePath: filePath, function: function, line: line),
+                                              runningEventHandlerOn: runningEventHandlerOn,
+                                              processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                              eventHandler: eventHandler,
+                                              callbackHandler: callbackHandler)
+    
+    }
+    
+}
+#else
+public extension CLICapture {
+    
+    /// Execute the CLI process and capture output events
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    /// - Returns: Returns the process being executed
+    func capture<DATA>(environment: [String: String]? = nil,
+                       currentDirectory: URL? = nil,
+                       standardInput: Any? = nil,
+                       outputOptions: CLIOutputOptions = .all,
+                       userInfo: [String: Any] = [:],
+                       filePath: StaticString = #file,
+                       function: StaticString = #function,
+                       line: UInt = #line,
+                       runningEventHandlerOn: DispatchQueue? = nil,
+                       processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                       eventHandler: @escaping CapturedProcessEventHandler<DATA>) throws -> Process {
+        return try self.capture(environment: environment,
+                                currentDirectory: currentDirectory,
+                                standardInput: standardInput,
+                                outputOptions: outputOptions,
+                                userInfo: userInfo,
+                                stackTrace: .init(filePath: filePath, function: function, line: line),
+                                runningEventHandlerOn: runningEventHandlerOn,
+                                processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                eventHandler: eventHandler)
+    }
+    
+    /// Execute the core process
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - passthrougOptions: The passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - callbackHandler: The handler to call when the process has finished
+    /// - Returns: Returns the process being executed
+    func execute(environment: [String: String]? = nil,
+                 currentDirectory: URL? = nil,
+                 standardInput: Any? = nil,
+                 passthrougOptions: CLIPassthroughOptions = .all,
+                 userInfo: [String: Any] = [:],
+                 filePath: StaticString = #file,
+                 function: StaticString = #function,
+                 line: UInt = #line,
+                 runningCallbackHandlerOn: DispatchQueue? = nil,
+                 processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                 callbackHandler: @escaping(_ sender: Process) -> Void) throws -> Process {
+        return try self.execute(environment: environment,
+                                currentDirectory: currentDirectory,
+                                standardInput: standardInput,
+                                passthrougOptions: passthrougOptions,
+                                userInfo: userInfo,
+                                stackTrace: .init(filePath: filePath, function: function, line: line),
+                                runningCallbackHandlerOn: runningCallbackHandlerOn,
+                                processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                callbackHandler: callbackHandler)
+    }
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - responseParser: Closure used to parse data into CapturedResponse object
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CapturedResponse object
+    /// - Returns: Returns the process being executed
+    func captureResponse<EventData,
+                         CapturedData,
+                         CapturedResponse>(environment: [String: String]? = nil,
+                                           currentDirectory: URL? = nil,
+                                           standardInput: Any? = nil,
+                                           outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           filePath: StaticString = #file,
+                                           function: StaticString = #function,
+                                           line: UInt = #line,
+                                           runningEventHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                           eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                           responseParser: @escaping (_ exitStatusCode: Int32,
+                                                                      _ captureOptions: CLICaptureOptions,
+                                                                      _ capturedEvents: [CLICapturedOutputEvent<CapturedData>]) throws -> CapturedResponse,
+                                           callbackHandler: @escaping (_ sender: Process,
+                                                                       _ response: CapturedResponse?,
+                                                                       _ error: Swift.Error?) -> Void) throws -> Process {
+                  
+        return try self.captureResponse(environment: environment,
+                                        currentDirectory: currentDirectory,
+                                        standardInput: standardInput,
+                                        outputOptions: outputOptions,
+                                        userInfo: userInfo,
+                                        stackTrace: .init(filePath: filePath, function: function, line: line),
+                                        runningEventHandlerOn: runningEventHandlerOn,
+                                        processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                        eventHandler: eventHandler,
+                                        responseParser: responseParser,
+                                        callbackHandler: callbackHandler)
+        
+    }
+    
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - responseType: The type of object to containd the captured response
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CapturedResponse object
+    /// - Returns: Returns the process being executed
+    func captureResponse<EventData,
+                         CapturedResponse>(environment: [String: String]? = nil,
+                                           currentDirectory: URL? = nil,
+                                           standardInput: Any? = nil,
+                                           outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           filePath: StaticString = #file,
+                                           function: StaticString = #function,
+                                           line: UInt = #line,
+                                           runningEventHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                           eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                           withResponseType responseType: CapturedResponse.Type,
+                                           callbackHandler: @escaping (_ sender: Process,
+                                                                       _ response: CapturedResponse?,
+                                                                       _ error: Swift.Error?) -> Void) throws -> Process
+        where CapturedResponse: CLICapturedResponse {
+                  
+            return try self.captureResponse(environment: environment,
+                                            currentDirectory: currentDirectory,
+                                            standardInput: standardInput,
+                                            outputOptions: outputOptions,
+                                            userInfo: userInfo,
+                                            stackTrace: .init(filePath: filePath, function: function, line: line),
+                                            runningEventHandlerOn: runningEventHandlerOn,
+                                            processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                            eventHandler: eventHandler,
+                                            withResponseType: responseType,
+                                            callbackHandler: callbackHandler)
+    }
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - dataType: The type of data object to containd the captured response
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CLICapturedDataResponse object
+    /// - Returns: Returns the process being executed
+    func captureDataResponse<EventData,
+                             ResponseData>(environment: [String: String]? = nil,
+                                           currentDirectory: URL? = nil,
+                                           standardInput: Any? = nil,
+                                           outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           filePath: StaticString = #file,
+                                           function: StaticString = #function,
+                                           line: UInt = #line,
+                                           runningEventHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                           eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                           withDataType dataType: ResponseData.Type,
+                                           callbackHandler: @escaping (_ sender: Process,
+                                                                       _ response: CLICapturedDataResponse<ResponseData>?,
+                                                                       _ error: Swift.Error?) -> Void ) throws -> Process {
+        return try self.captureDataResponse(environment: environment,
+                                        currentDirectory: currentDirectory,
+                                        standardInput: standardInput,
+                                        outputOptions: outputOptions,
+                                        userInfo: userInfo,
+                                        stackTrace: .init(filePath: filePath, function: function, line: line),
+                                        runningEventHandlerOn: runningEventHandlerOn,
+                                            processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                        eventHandler: eventHandler,
+                                            withDataType: dataType,
+                                        callbackHandler: callbackHandler)
+    }
+    
+    /// Execute core process and return the output as string objects
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the cli process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CLICapturedStringResponse object
+    /// - Returns: Returns the process being executed
+    func captureStringResponse<EventData>(environment: [String: String]? = nil,
+                                          currentDirectory: URL? = nil,
+                                          standardInput: Any? = nil,
+                                          outputOptions: CLIOutputOptions = .captureAll,
+                                          userInfo: [String: Any] = [:],
+                                          filePath: StaticString = #file,
+                                          function: StaticString = #function,
+                                          line: UInt = #line,
+                                          runningEventHandlerOn: DispatchQueue? = nil,
+                                          processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                          eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                          callbackHandler: @escaping (_ sender: Process,
+                                                                      _ response: CLICapturedStringResponse?,
+                                                                      _ error: Swift.Error?) -> Void ) throws -> Process {
+            
+        return try self.captureStringResponse(environment: environment,
+                                              currentDirectory: currentDirectory,
+                                              standardInput: standardInput,
+                                              outputOptions: outputOptions,
+                                              userInfo: userInfo,
+                                              stackTrace: .init(filePath: filePath, function: function, line: line),
+                                              runningEventHandlerOn: runningEventHandlerOn,
+                                              processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                              eventHandler: eventHandler,
+                                              callbackHandler: callbackHandler)
+    
+    }
+    
+}
+#endif
 
 // MARK: Without 'arguments' and 'eventHandler' Parameters
 public extension CLICapture {
@@ -978,7 +2536,10 @@ public extension CLICapture {
     ///   - currentDirectory: The current working directory to set
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - responseParser: Closure used to parse data into CapturedResponse object
     ///   - callbackHandler: The closure to execute when capturing is finished with the CapturedResponse object
     /// - Returns: Returns the process being executed
@@ -987,7 +2548,10 @@ public extension CLICapture {
                                            currentDirectory: URL? = nil,
                                            standardInput: Any? = nil,
                                            outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           stackTrace: CLIStackTrace,
                                            runningCallbackHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                            responseParser: @escaping (_ exitStatusCode: Int32,
                                                                       _ captureOptions: CLICaptureOptions,
                                                                       _ capturedEvents: [CLICapturedOutputEvent<CapturedData>]) throws -> CapturedResponse,
@@ -1002,7 +2566,10 @@ public extension CLICapture {
                                         currentDirectory: currentDirectory,
                                         standardInput: standardInput,
                                         outputOptions: outputOptions,
+                                        userInfo: userInfo,
+                                        stackTrace: stackTrace.stacking(),
                                         runningEventHandlerOn: runningCallbackHandlerOn,
+                                        processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                         eventHandler: eventHandler,
                                         responseParser: responseParser,
                                         callbackHandler: callbackHandler)
@@ -1016,7 +2583,10 @@ public extension CLICapture {
     ///   - currentDirectory: The current working directory to set
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - responseType: The type of object to containd the captured response
     ///   - callbackHandler: The closure to execute when capturing is finished with the CapturedResponse object
     /// - Returns: Returns the process being executed
@@ -1024,7 +2594,10 @@ public extension CLICapture {
                                            currentDirectory: URL? = nil,
                                            standardInput: Any? = nil,
                                            outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           stackTrace: CLIStackTrace,
                                            runningCallbackHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                            withResponseType responseType: CapturedResponse.Type,
                                            callbackHandler: @escaping (_ sender: Process,
                                                                        _ response: CapturedResponse?,
@@ -1038,7 +2611,10 @@ public extension CLICapture {
                                         currentDirectory: currentDirectory,
                                         standardInput: standardInput,
                                         outputOptions: outputOptions,
+                                        userInfo: userInfo,
+                                        stackTrace: stackTrace.stacking(),
                                         runningEventHandlerOn: runningCallbackHandlerOn,
+                                        processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                         eventHandler: eventHandler,
                                         withResponseType: responseType,
                                         callbackHandler: callbackHandler)
@@ -1050,7 +2626,10 @@ public extension CLICapture {
     ///   - currentDirectory: The current working directory to set
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - dataType: The type of data object to containd the captured response
     ///   - callbackHandler: The closure to execute when capturing is finished with the CLICapturedDataResponse object
     /// - Returns: Returns the process being executed
@@ -1058,7 +2637,10 @@ public extension CLICapture {
                                            currentDirectory: URL? = nil,
                                            standardInput: Any? = nil,
                                            outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           stackTrace: CLIStackTrace,
                                            runningCallbackHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                            withDataType dataType: ResponseData.Type,
                                            callbackHandler: @escaping (_ sender: Process,
                                                                        _ response: CLICapturedDataResponse<ResponseData>?,
@@ -1071,7 +2653,10 @@ public extension CLICapture {
                                             currentDirectory: currentDirectory,
                                             standardInput: standardInput,
                                             outputOptions: outputOptions,
+                                            userInfo: userInfo,
+                                            stackTrace: stackTrace.stacking(),
                                             runningEventHandlerOn: runningCallbackHandlerOn,
+                                            processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                             eventHandler: eventHandler,
                                             withDataType: dataType,
                                             callbackHandler: callbackHandler)
@@ -1083,14 +2668,20 @@ public extension CLICapture {
     ///   - currentDirectory: The current working directory to set
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the cli process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - callbackHandler: The closure to execute when capturing is finished with the CLICapturedStringResponse object
     /// - Returns: Returns the process being executed
     func captureStringResponse(environment: [String: String]? = nil,
                                currentDirectory: URL? = nil,
                                standardInput: Any? = nil,
                                outputOptions: CLIOutputOptions = .captureAll,
+                               userInfo: [String: Any] = [:],
+                               stackTrace: CLIStackTrace,
                                runningCallbackHandlerOn: DispatchQueue? = nil,
+                               processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                callbackHandler: @escaping (_ sender: Process,
                                                            _ response: CLICapturedStringResponse?,
                                                            _ error: Swift.Error?) -> Void ) throws -> Process {
@@ -1102,13 +2693,348 @@ public extension CLICapture {
                                               currentDirectory: currentDirectory,
                                               standardInput: standardInput,
                                               outputOptions: outputOptions,
+                                              userInfo: userInfo,
+                                              stackTrace: stackTrace.stacking(),
                                               runningEventHandlerOn: runningCallbackHandlerOn,
+                                              processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                               eventHandler: eventHandler,
                                               callbackHandler: callbackHandler)
     
     }
     
 }
+
+#if swift(>=5.3)
+public extension CLICapture {
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - responseParser: Closure used to parse data into CapturedResponse object
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CapturedResponse object
+    /// - Returns: Returns the process being executed
+    func captureResponse<CapturedData,
+                         CapturedResponse>(environment: [String: String]? = nil,
+                                           currentDirectory: URL? = nil,
+                                           standardInput: Any? = nil,
+                                           outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           filePath: StaticString = #filePath,
+                                           function: StaticString = #function,
+                                           line: UInt = #line,
+                                           runningCallbackHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                           responseParser: @escaping (_ exitStatusCode: Int32,
+                                                                      _ captureOptions: CLICaptureOptions,
+                                                                      _ capturedEvents: [CLICapturedOutputEvent<CapturedData>]) throws -> CapturedResponse,
+                                           callbackHandler: @escaping (_ sender: Process,
+                                                                       _ response: CapturedResponse?,
+                                                                       _ error: Swift.Error?) -> Void) throws -> Process {
+        
+        return try self.captureResponse(environment: environment,
+                                        currentDirectory: currentDirectory,
+                                        standardInput: standardInput,
+                                        outputOptions: outputOptions,
+                                        userInfo: userInfo,
+                                        stackTrace: .init(filePath: filePath, function: function, line: line),
+                                        runningCallbackHandlerOn: runningCallbackHandlerOn,
+                                        processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                        responseParser: responseParser,
+                                        callbackHandler: callbackHandler)
+        
+    }
+    
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - responseType: The type of object to containd the captured response
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CapturedResponse object
+    /// - Returns: Returns the process being executed
+    func captureResponse<CapturedResponse>(environment: [String: String]? = nil,
+                                           currentDirectory: URL? = nil,
+                                           standardInput: Any? = nil,
+                                           outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           filePath: StaticString = #filePath,
+                                           function: StaticString = #function,
+                                           line: UInt = #line,
+                                           runningCallbackHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                           withResponseType responseType: CapturedResponse.Type,
+                                           callbackHandler: @escaping (_ sender: Process,
+                                                                       _ response: CapturedResponse?,
+                                                                       _ error: Swift.Error?) -> Void) throws -> Process
+    where CapturedResponse: CLICapturedResponse {
+        
+        return try self.captureResponse(environment: environment,
+                                        currentDirectory: currentDirectory,
+                                        standardInput: standardInput,
+                                        outputOptions: outputOptions,
+                                        userInfo: userInfo,
+                                        stackTrace: .init(filePath: filePath, function: function, line: line),
+                                        runningCallbackHandlerOn: runningCallbackHandlerOn,
+                                        processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                        withResponseType: responseType,
+                                        callbackHandler: callbackHandler)
+        
+    }
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - dataType: The type of data object to containd the captured response
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CLICapturedDataResponse object
+    /// - Returns: Returns the process being executed
+    func captureDataResponse<ResponseData>(environment: [String: String]? = nil,
+                                           currentDirectory: URL? = nil,
+                                           standardInput: Any? = nil,
+                                           outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           filePath: StaticString = #filePath,
+                                           function: StaticString = #function,
+                                           line: UInt = #line,
+                                           runningCallbackHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                           withDataType dataType: ResponseData.Type,
+                                           callbackHandler: @escaping (_ sender: Process,
+                                                                       _ response: CLICapturedDataResponse<ResponseData>?,
+                                                                       _ error: Swift.Error?) -> Void ) throws -> Process {
+        
+        return try self.captureDataResponse(environment: environment,
+                                            currentDirectory: currentDirectory,
+                                            standardInput: standardInput,
+                                            outputOptions: outputOptions,
+                                            userInfo: userInfo,
+                                            stackTrace: .init(filePath: filePath, function: function, line: line),
+                                            runningCallbackHandlerOn: runningCallbackHandlerOn,
+                                            processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                            withDataType: dataType,
+                                            callbackHandler: callbackHandler)
+    }
+    
+    /// Execute core process and return the output as string objects
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the cli process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CLICapturedStringResponse object
+    /// - Returns: Returns the process being executed
+    func captureStringResponse(environment: [String: String]? = nil,
+                               currentDirectory: URL? = nil,
+                               standardInput: Any? = nil,
+                               outputOptions: CLIOutputOptions = .captureAll,
+                               userInfo: [String: Any] = [:],
+                               filePath: StaticString = #filePath,
+                               function: StaticString = #function,
+                               line: UInt = #line,
+                               runningCallbackHandlerOn: DispatchQueue? = nil,
+                               processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                               callbackHandler: @escaping (_ sender: Process,
+                                                           _ response: CLICapturedStringResponse?,
+                                                           _ error: Swift.Error?) -> Void ) throws -> Process {
+            
+        return try self.captureStringResponse(environment: environment,
+                                            currentDirectory: currentDirectory,
+                                            standardInput: standardInput,
+                                            outputOptions: outputOptions,
+                                            userInfo: userInfo,
+                                            stackTrace: .init(filePath: filePath, function: function, line: line),
+                                            runningCallbackHandlerOn: runningCallbackHandlerOn,
+                                              processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                            callbackHandler: callbackHandler)
+    
+    }
+    
+}
+#else
+public extension CLICapture {
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - responseParser: Closure used to parse data into CapturedResponse object
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CapturedResponse object
+    /// - Returns: Returns the process being executed
+    func captureResponse<CapturedData,
+                         CapturedResponse>(environment: [String: String]? = nil,
+                                           currentDirectory: URL? = nil,
+                                           standardInput: Any? = nil,
+                                           outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           filePath: StaticString = #file,
+                                           function: StaticString = #function,
+                                           line: UInt = #line,
+                                           runningCallbackHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                           responseParser: @escaping (_ exitStatusCode: Int32,
+                                                                      _ captureOptions: CLICaptureOptions,
+                                                                      _ capturedEvents: [CLICapturedOutputEvent<CapturedData>]) throws -> CapturedResponse,
+                                           callbackHandler: @escaping (_ sender: Process,
+                                                                       _ response: CapturedResponse?,
+                                                                       _ error: Swift.Error?) -> Void) throws -> Process {
+        
+        return try self.captureResponse(environment: environment,
+                                        currentDirectory: currentDirectory,
+                                        standardInput: standardInput,
+                                        outputOptions: outputOptions,
+                                        userInfo: userInfo,
+                                        stackTrace: .init(filePath: filePath, function: function, line: line),
+                                        runningCallbackHandlerOn: runningCallbackHandlerOn,
+                                        processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                        responseParser: responseParser,
+                                        callbackHandler: callbackHandler)
+        
+    }
+    
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - responseType: The type of object to containd the captured response
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CapturedResponse object
+    /// - Returns: Returns the process being executed
+    func captureResponse<CapturedResponse>(environment: [String: String]? = nil,
+                                           currentDirectory: URL? = nil,
+                                           standardInput: Any? = nil,
+                                           outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           filePath: StaticString = #file,
+                                           function: StaticString = #function,
+                                           line: UInt = #line,
+                                           runningCallbackHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                           withResponseType responseType: CapturedResponse.Type,
+                                           callbackHandler: @escaping (_ sender: Process,
+                                                                       _ response: CapturedResponse?,
+                                                                       _ error: Swift.Error?) -> Void) throws -> Process
+    where CapturedResponse: CLICapturedResponse {
+        
+        return try self.captureResponse(environment: environment,
+                                        currentDirectory: currentDirectory,
+                                        standardInput: standardInput,
+                                        outputOptions: outputOptions,
+                                        userInfo: userInfo,
+                                        stackTrace: .init(filePath: filePath, function: function, line: line),
+                                        runningCallbackHandlerOn: runningCallbackHandlerOn,
+                                        processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                        withResponseType: responseType,
+                                        callbackHandler: callbackHandler)
+        
+    }
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - dataType: The type of data object to containd the captured response
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CLICapturedDataResponse object
+    /// - Returns: Returns the process being executed
+    func captureDataResponse<ResponseData>(environment: [String: String]? = nil,
+                                           currentDirectory: URL? = nil,
+                                           standardInput: Any? = nil,
+                                           outputOptions: CLIOutputOptions = .captureAll,
+                                           userInfo: [String: Any] = [:],
+                                           filePath: StaticString = #file,
+                                           function: StaticString = #function,
+                                           line: UInt = #line,
+                                           runningCallbackHandlerOn: DispatchQueue? = nil,
+                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                           withDataType dataType: ResponseData.Type,
+                                           callbackHandler: @escaping (_ sender: Process,
+                                                                       _ response: CLICapturedDataResponse<ResponseData>?,
+                                                                       _ error: Swift.Error?) -> Void ) throws -> Process {
+        
+        return try self.captureDataResponse(environment: environment,
+                                            currentDirectory: currentDirectory,
+                                            standardInput: standardInput,
+                                            outputOptions: outputOptions,
+                                            userInfo: userInfo,
+                                            stackTrace: .init(filePath: filePath, function: function, line: line),
+                                            runningCallbackHandlerOn: runningCallbackHandlerOn,
+                                            processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                            withDataType: dataType,
+                                            callbackHandler: callbackHandler)
+    }
+    
+    /// Execute core process and return the output as string objects
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the cli process outputs
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - runningCallbackHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - callbackHandler: The closure to execute when capturing is finished with the CLICapturedStringResponse object
+    /// - Returns: Returns the process being executed
+    func captureStringResponse(environment: [String: String]? = nil,
+                               currentDirectory: URL? = nil,
+                               standardInput: Any? = nil,
+                               outputOptions: CLIOutputOptions = .captureAll,
+                               userInfo: [String: Any] = [:],
+                               filePath: StaticString = #file,
+                               function: StaticString = #function,
+                               line: UInt = #line,
+                               runningCallbackHandlerOn: DispatchQueue? = nil,
+                               processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                               callbackHandler: @escaping (_ sender: Process,
+                                                           _ response: CLICapturedStringResponse?,
+                                                           _ error: Swift.Error?) -> Void ) throws -> Process {
+            
+        return try self.captureStringResponse(environment: environment,
+                                            currentDirectory: currentDirectory,
+                                            standardInput: standardInput,
+                                            outputOptions: outputOptions,
+                                            userInfo: userInfo,
+                                            stackTrace: .init(filePath: filePath, function: function, line: line),
+                                            runningCallbackHandlerOn: runningCallbackHandlerOn,
+                                              processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                            callbackHandler: callbackHandler)
+    
+    }
+    
+}
+#endif
 
 // MARK: waitAnd Methods
 public extension CLICapture {
@@ -1121,8 +3047,11 @@ public extension CLICapture {
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the core process outputs
     ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - eventHandler: The event handler to pass Process events to
     ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     /// - Returns: Returns terminationStatus of the process executed
     func waitAndCapture<ARGS, DATA>(arguments: ARGS,
                                     environment: [String: String]? = nil,
@@ -1130,8 +3059,11 @@ public extension CLICapture {
                                     standardInput: Any? = nil,
                                     outputOptions: CLIOutputOptions = .all,
                                     runningEventHandlerOn: DispatchQueue? = nil,
+                                    processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                     eventHandler: @escaping CapturedOutputEventHandler<DATA>,
-                                    timeout: DispatchTime = .distantFuture) throws -> Int32
+                                    timeout: DispatchTime = .distantFuture,
+                                    userInfo: [String: Any] = [:],
+                                    stackTrace: CLIStackTrace) throws -> Int32
     where ARGS: Sequence, ARGS.Element == String {
        
         let semaphore = DispatchSemaphore(value: 0)
@@ -1141,7 +3073,10 @@ public extension CLICapture {
                                  currentDirectory: currentDirectory,
                                  standardInput: standardInput,
                                  outputOptions: outputOptions,
-                                 runningEventHandlerOn: runningEventHandlerOn ) {
+                                 userInfo: userInfo,
+                                 stackTrace: stackTrace.stacking(),
+                                 runningEventHandlerOn: runningEventHandlerOn,
+                                 processWroteToItsSTDOutput: processWroteToItsSTDOutput ) {
             (_ event: CLICapturedProcessEvent<DATA>) -> Void in
             
             if let o = event.outputEvent {
@@ -1171,14 +3106,20 @@ public extension CLICapture {
     ///   - currentDirectory: The current working directory to set
     ///   - standardInput: The standard input to set the core process
     ///   - passthrougOptions: The passthrough options for the core process outputs
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     /// - Returns: Returns terminationStatus of the process executed
     func executeAndWait<ARGS>(arguments: ARGS,
                               environment: [String: String]? = nil,
                               currentDirectory: URL? = nil,
                               standardInput: Any? = nil,
                               passthrougOptions: CLIPassthroughOptions = .all,
-                              timeout: DispatchTime = .distantFuture) throws -> Int32
+                              processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                              timeout: DispatchTime = .distantFuture,
+                              userInfo: [String: Any] = [:],
+                              stackTrace: CLIStackTrace) throws -> Int32
     where ARGS: Sequence, ARGS.Element == String {
         
         let semaphore = DispatchSemaphore(value: 0)
@@ -1187,6 +3128,9 @@ public extension CLICapture {
                                  currentDirectory: currentDirectory,
                                  standardInput: standardInput,
                                  passthrougOptions: passthrougOptions,
+                                 userInfo: userInfo,
+                                 stackTrace: stackTrace.stacking(),
+                                 processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                  callbackHandler: { _ in semaphore.signal()})
         guard semaphore.wait(timeout: timeout) == .success else {
             if p.isRunning {
@@ -1206,9 +3150,12 @@ public extension CLICapture {
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the core process outputs
     ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - eventHandler: The event handler to pass data events to
     ///   - responseParser: Closure used to parse data into CapturedResponse object
     ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     /// - Returns: Returns the parsed CapturedResponse object
     func waitAndCaptureResponse<ARGS,
                               EventData,
@@ -1219,11 +3166,14 @@ public extension CLICapture {
                                                 standardInput: Any? = nil,
                                                 outputOptions: CLIOutputOptions = .captureAll,
                                                 runningEventHandlerOn: DispatchQueue? = nil,
+                                                processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                                 eventHandler: @escaping CapturedOutputEventHandler<EventData>,
                                                 responseParser: @escaping (_ exitStatusCode: Int32,
                                                                            _ captureOptions: CLICaptureOptions,
                                                                            _ capturedEvents: [CLICapturedOutputEvent<CapturedData>]) throws -> CapturedResponse,
-                                                timeout: DispatchTime = .distantFuture) throws -> CapturedResponse
+                                                timeout: DispatchTime = .distantFuture,
+                                                userInfo: [String: Any] = [:],
+                                                stackTrace: CLIStackTrace) throws -> CapturedResponse
     where ARGS: Sequence,
           ARGS.Element == String {
                   
@@ -1235,7 +3185,10 @@ public extension CLICapture {
                                          currentDirectory: currentDirectory,
                                          standardInput: standardInput,
                                          outputOptions: outputOptions,
+                                         userInfo: userInfo,
+                                         stackTrace: stackTrace.stacking(),
                                          runningEventHandlerOn: runningEventHandlerOn,
+                                         processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                          eventHandler: eventHandler,
                                          responseParser: responseParser) {
             (_ sender: Process, _ response: CapturedResponse?, _ error: Swift.Error?) -> Void in
@@ -1266,9 +3219,12 @@ public extension CLICapture {
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the core process outputs
     ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - eventHandler: The event handler to pass data events to
     ///   - responseType: The type of object to containd the captured response
     ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     /// - Returns: Returns the parsed CapturedResponse object
     func waitAndCaptureResponse<ARGS,
                               EventData,
@@ -1278,9 +3234,12 @@ public extension CLICapture {
                                                 standardInput: Any? = nil,
                                                 outputOptions: CLIOutputOptions = .captureAll,
                                                 runningEventHandlerOn: DispatchQueue? = nil,
+                                                processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                                 eventHandler: @escaping CapturedOutputEventHandler<EventData>,
                                                 withResponseType responseType: CapturedResponse.Type,
-                                                timeout: DispatchTime = .distantFuture) throws -> CapturedResponse
+                                                timeout: DispatchTime = .distantFuture,
+                                                userInfo: [String: Any] = [:],
+                                                stackTrace: CLIStackTrace) throws -> CapturedResponse
         where ARGS: Sequence,
               ARGS.Element == String,
               CapturedResponse: CLICapturedResponse {
@@ -1293,7 +3252,10 @@ public extension CLICapture {
                                            currentDirectory: currentDirectory,
                                            standardInput: standardInput,
                                            outputOptions: outputOptions,
+                                           userInfo: userInfo,
+                                           stackTrace: stackTrace.stacking(),
                                            runningEventHandlerOn: runningEventHandlerOn,
+                                           processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                            eventHandler: eventHandler,
                                            withResponseType: responseType) {
               (_ sender: Process, _ response: CapturedResponse?, _ error: Swift.Error?) -> Void in
@@ -1322,9 +3284,12 @@ public extension CLICapture {
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the core process outputs
     ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - eventHandler: The event handler to pass data events to
     ///   - dataType: The type of data object to containd the captured response
     ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     /// - Returns: Returns the parsed CLICapturedDataResponse object
     func waitAndCaptureDataResponse<ARGS,
                                   EventData,
@@ -1334,9 +3299,12 @@ public extension CLICapture {
                                                 standardInput: Any? = nil,
                                                 outputOptions: CLIOutputOptions = .captureAll,
                                                 runningEventHandlerOn: DispatchQueue? = nil,
+                                                processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                                 eventHandler: @escaping CapturedOutputEventHandler<EventData>,
                                                 withDataType dataType: ResponseData.Type,
-                                                timeout: DispatchTime = .distantFuture) throws -> CLICapturedDataResponse<ResponseData>
+                                                timeout: DispatchTime = .distantFuture,
+                                                userInfo: [String: Any] = [:],
+                                                stackTrace: CLIStackTrace) throws -> CLICapturedDataResponse<ResponseData>
     where ARGS: Sequence, ARGS.Element == String {
         let semaphore = DispatchSemaphore(value: 0)
         var rtn: CLICapturedDataResponse<ResponseData>? = nil
@@ -1346,7 +3314,10 @@ public extension CLICapture {
                                              currentDirectory: currentDirectory,
                                              standardInput: standardInput,
                                              outputOptions: outputOptions,
+                                             userInfo: userInfo,
+                                             stackTrace: stackTrace.stacking(),
                                              runningEventHandlerOn: runningEventHandlerOn,
+                                             processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                              eventHandler: eventHandler,
                                              withDataType: dataType) {
             (_ sender: Process,
@@ -1378,8 +3349,11 @@ public extension CLICapture {
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the cli process outputs
     ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - eventHandler: The event handler to pass data events to
     ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     /// - Returns:  Returns the parsed CLICapturedStringResponse object
     func waitAndCaptureStringResponse<ARGS,
                                     EventData>(arguments: ARGS,
@@ -1388,8 +3362,11 @@ public extension CLICapture {
                                                standardInput: Any? = nil,
                                                outputOptions: CLIOutputOptions = .captureAll,
                                                runningEventHandlerOn: DispatchQueue? = nil,
+                                               processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                                eventHandler: @escaping CapturedOutputEventHandler<EventData>,
-                                               timeout: DispatchTime = .distantFuture) throws -> CLICapturedStringResponse
+                                               timeout: DispatchTime = .distantFuture,
+                                               userInfo: [String: Any] = [:],
+                                               stackTrace: CLIStackTrace) throws -> CLICapturedStringResponse
         where ARGS: Sequence, ARGS.Element == String {
             
             let semaphore = DispatchSemaphore(value: 0)
@@ -1400,7 +3377,10 @@ public extension CLICapture {
                                                    currentDirectory: currentDirectory,
                                                    standardInput: standardInput,
                                                    outputOptions: outputOptions,
+                                                   userInfo: userInfo,
+                                                   stackTrace: stackTrace.stacking(),
                                                    runningEventHandlerOn: runningEventHandlerOn,
+                                                   processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                                    eventHandler: eventHandler) {
                 (_ sender: Process,
                  _ response: CLICapturedStringResponse?,
@@ -1426,6 +3406,548 @@ public extension CLICapture {
     
 }
 
+#if swift(>=5.3)
+public extension CLICapture {
+    
+    /// Execute the CLI process and capture output events
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass Process events to
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns terminationStatus of the process executed
+    func waitAndCapture<ARGS, DATA>(arguments: ARGS,
+                                    environment: [String: String]? = nil,
+                                    currentDirectory: URL? = nil,
+                                    standardInput: Any? = nil,
+                                    outputOptions: CLIOutputOptions = .all,
+                                    runningEventHandlerOn: DispatchQueue? = nil,
+                                    processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                    eventHandler: @escaping CapturedOutputEventHandler<DATA>,
+                                    timeout: DispatchTime = .distantFuture,
+                                    userInfo: [String: Any] = [:],
+                                    filePath: StaticString = #filePath,
+                                    function: StaticString = #function,
+                                    line: UInt = #line) throws -> Int32
+    where ARGS: Sequence, ARGS.Element == String {
+       
+        return try self.waitAndCapture(arguments: arguments,
+                                       environment: environment,
+                                       currentDirectory: currentDirectory,
+                                       standardInput: standardInput,
+                                       outputOptions: outputOptions,
+                                       runningEventHandlerOn: runningEventHandlerOn,
+                                       processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                       eventHandler: eventHandler,
+                                       timeout: timeout,
+                                       userInfo: userInfo,
+                                       stackTrace: .init(filePath: filePath, function: function, line: line))
+        
+    }
+    
+    /// Execute the core process
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - passthrougOptions: The passthrough options for the core process outputs
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns terminationStatus of the process executed
+    func executeAndWait<ARGS>(arguments: ARGS,
+                              environment: [String: String]? = nil,
+                              currentDirectory: URL? = nil,
+                              standardInput: Any? = nil,
+                              passthrougOptions: CLIPassthroughOptions = .all,
+                              processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                              timeout: DispatchTime = .distantFuture,
+                              userInfo: [String: Any] = [:],
+                              filePath: StaticString = #filePath,
+                              function: StaticString = #function,
+                              line: UInt = #line) throws -> Int32
+    where ARGS: Sequence, ARGS.Element == String {
+        
+        return try self.executeAndWait(arguments: arguments,
+                                       environment: environment,
+                                       currentDirectory: currentDirectory,
+                                       standardInput: standardInput,
+                                       passthrougOptions: passthrougOptions,
+                                       processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                       timeout: timeout,
+                                       userInfo: userInfo,
+                                       stackTrace: .init(filePath: filePath, function: function, line: line))
+        
+    }
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - responseParser: Closure used to parse data into CapturedResponse object
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns the parsed CapturedResponse object
+    func waitAndCaptureResponse<ARGS,
+                              EventData,
+                              CapturedData,
+                              CapturedResponse>(arguments: ARGS,
+                                                environment: [String: String]? = nil,
+                                                currentDirectory: URL? = nil,
+                                                standardInput: Any? = nil,
+                                                outputOptions: CLIOutputOptions = .captureAll,
+                                                runningEventHandlerOn: DispatchQueue? = nil,
+                                                processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                                responseParser: @escaping (_ exitStatusCode: Int32,
+                                                                           _ captureOptions: CLICaptureOptions,
+                                                                           _ capturedEvents: [CLICapturedOutputEvent<CapturedData>]) throws -> CapturedResponse,
+                                                timeout: DispatchTime = .distantFuture,
+                                                userInfo: [String: Any] = [:],
+                                                filePath: StaticString = #filePath,
+                                                function: StaticString = #function,
+                                                line: UInt = #line) throws -> CapturedResponse
+    where ARGS: Sequence,
+          ARGS.Element == String {
+                  
+          return try self.waitAndCaptureResponse(arguments: arguments,
+                                             environment: environment,
+                                             currentDirectory: currentDirectory,
+                                             standardInput: standardInput,
+                                             outputOptions: outputOptions,
+                                             runningEventHandlerOn: runningEventHandlerOn,
+                                             processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                             eventHandler: eventHandler,
+                                             responseParser: responseParser,
+                                             timeout: timeout,
+                                             userInfo: userInfo,
+                                             stackTrace: .init(filePath: filePath, function: function, line: line))
+              
+    }
+    
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - responseType: The type of object to containd the captured response
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns the parsed CapturedResponse object
+    func waitAndCaptureResponse<ARGS,
+                              EventData,
+                              CapturedResponse>(arguments: ARGS,
+                                                environment: [String: String]? = nil,
+                                                currentDirectory: URL? = nil,
+                                                standardInput: Any? = nil,
+                                                outputOptions: CLIOutputOptions = .captureAll,
+                                                runningEventHandlerOn: DispatchQueue? = nil,
+                                                processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                                withResponseType responseType: CapturedResponse.Type,
+                                                timeout: DispatchTime = .distantFuture,
+                                                userInfo: [String: Any] = [:],
+                                                filePath: StaticString = #filePath,
+                                                function: StaticString = #function,
+                                                line: UInt = #line) throws -> CapturedResponse
+        where ARGS: Sequence,
+              ARGS.Element == String,
+              CapturedResponse: CLICapturedResponse {
+                  
+          return try self.waitAndCaptureResponse(arguments: arguments,
+                                                 environment: environment,
+                                                 currentDirectory: currentDirectory,
+                                                 standardInput: standardInput,
+                                                 outputOptions: outputOptions,
+                                                 runningEventHandlerOn: runningEventHandlerOn,
+                                                 processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                                 eventHandler: eventHandler,
+                                                 withResponseType: responseType,
+                                                 timeout: timeout,
+                                                 userInfo: userInfo,
+                                                 stackTrace: .init(filePath: filePath, function: function, line: line))
+    }
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - dataType: The type of data object to containd the captured response
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns the parsed CLICapturedDataResponse object
+    func waitAndCaptureDataResponse<ARGS,
+                                  EventData,
+                                  ResponseData>(arguments: ARGS,
+                                                environment: [String: String]? = nil,
+                                                currentDirectory: URL? = nil,
+                                                standardInput: Any? = nil,
+                                                outputOptions: CLIOutputOptions = .captureAll,
+                                                runningEventHandlerOn: DispatchQueue? = nil,
+                                                processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                                withDataType dataType: ResponseData.Type,
+                                                timeout: DispatchTime = .distantFuture,
+                                                userInfo: [String: Any] = [:],
+                                                filePath: StaticString = #filePath,
+                                                function: StaticString = #function,
+                                                line: UInt = #line) throws -> CLICapturedDataResponse<ResponseData>
+    where ARGS: Sequence, ARGS.Element == String {
+        return try self.waitAndCaptureDataResponse(arguments: arguments,
+                                                   environment: environment,
+                                                   currentDirectory: currentDirectory,
+                                                   standardInput: standardInput,
+                                                   outputOptions: outputOptions,
+                                                   runningEventHandlerOn: runningEventHandlerOn,
+                                                   processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                                   eventHandler: eventHandler,
+                                                   withDataType: dataType,
+                                                   timeout: timeout,
+                                                   userInfo: userInfo,
+                                                   stackTrace: .init(filePath: filePath, function: function, line: line))
+    }
+    
+    /// Execute core process and return the output as string objects
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the cli process outputs
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns:  Returns the parsed CLICapturedStringResponse object
+    func waitAndCaptureStringResponse<ARGS,
+                                    EventData>(arguments: ARGS,
+                                               environment: [String: String]? = nil,
+                                               currentDirectory: URL? = nil,
+                                               standardInput: Any? = nil,
+                                               outputOptions: CLIOutputOptions = .captureAll,
+                                               runningEventHandlerOn: DispatchQueue? = nil,
+                                               processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                               eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                               timeout: DispatchTime = .distantFuture,
+                                               userInfo: [String: Any] = [:],
+                                               filePath: StaticString = #filePath,
+                                               function: StaticString = #function,
+                                               line: UInt = #line) throws -> CLICapturedStringResponse
+        where ARGS: Sequence, ARGS.Element == String {
+            
+            return try self.waitAndCaptureStringResponse(arguments: arguments,
+                                                         environment: environment,
+                                                         currentDirectory: currentDirectory,
+                                                         standardInput: standardInput,
+                                                         outputOptions: outputOptions,
+                                                         runningEventHandlerOn: runningEventHandlerOn,
+                                                         processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                                         eventHandler: eventHandler,
+                                                         timeout: timeout,
+                                                         userInfo: userInfo,
+                                                         stackTrace: .init(filePath: filePath, function: function, line: line))
+    
+    }
+    
+}
+#else
+public extension CLICapture {
+    
+    /// Execute the CLI process and capture output events
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass Process events to
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns terminationStatus of the process executed
+    func waitAndCapture<ARGS, DATA>(arguments: ARGS,
+                                    environment: [String: String]? = nil,
+                                    currentDirectory: URL? = nil,
+                                    standardInput: Any? = nil,
+                                    outputOptions: CLIOutputOptions = .all,
+                                    runningEventHandlerOn: DispatchQueue? = nil,
+                                    processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                    eventHandler: @escaping CapturedOutputEventHandler<DATA>,
+                                    timeout: DispatchTime = .distantFuture,
+                                    userInfo: [String: Any] = [:],
+                                    filePath: StaticString = #file,
+                                    function: StaticString = #function,
+                                    line: UInt = #line) throws -> Int32
+    where ARGS: Sequence, ARGS.Element == String {
+       
+        return try self.waitAndCapture(arguments: arguments,
+                                       environment: environment,
+                                       currentDirectory: currentDirectory,
+                                       standardInput: standardInput,
+                                       outputOptions: outputOptions,
+                                       runningEventHandlerOn: runningEventHandlerOn,
+                                       processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                       eventHandler: eventHandler,
+                                       timeout: timeout,
+                                       userInfo: userInfo,
+                                       stackTrace: .init(filePath: filePath, function: function, line: line))
+        
+    }
+    
+    /// Execute the core process
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - passthrougOptions: The passthrough options for the core process outputs
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns terminationStatus of the process executed
+    func executeAndWait<ARGS>(arguments: ARGS,
+                              environment: [String: String]? = nil,
+                              currentDirectory: URL? = nil,
+                              standardInput: Any? = nil,
+                              passthrougOptions: CLIPassthroughOptions = .all,
+                              processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                              timeout: DispatchTime = .distantFuture,
+                              userInfo: [String: Any] = [:],
+                              filePath: StaticString = #file,
+                              function: StaticString = #function,
+                              line: UInt = #line) throws -> Int32
+    where ARGS: Sequence, ARGS.Element == String {
+        
+        return try self.executeAndWait(arguments: arguments,
+                                       environment: environment,
+                                       currentDirectory: currentDirectory,
+                                       standardInput: standardInput,
+                                       passthrougOptions: passthrougOptions,
+                                       processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                       timeout: timeout,
+                                       userInfo: userInfo,
+                                       stackTrace: .init(filePath: filePath, function: function, line: line))
+        
+    }
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - responseParser: Closure used to parse data into CapturedResponse object
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns the parsed CapturedResponse object
+    func waitAndCaptureResponse<ARGS,
+                              EventData,
+                              CapturedData,
+                              CapturedResponse>(arguments: ARGS,
+                                                environment: [String: String]? = nil,
+                                                currentDirectory: URL? = nil,
+                                                standardInput: Any? = nil,
+                                                outputOptions: CLIOutputOptions = .captureAll,
+                                                runningEventHandlerOn: DispatchQueue? = nil,
+                                                processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                                responseParser: @escaping (_ exitStatusCode: Int32,
+                                                                           _ captureOptions: CLICaptureOptions,
+                                                                           _ capturedEvents: [CLICapturedOutputEvent<CapturedData>]) throws -> CapturedResponse,
+                                                timeout: DispatchTime = .distantFuture,
+                                                userInfo: [String: Any] = [:],
+                                                filePath: StaticString = #file,
+                                                function: StaticString = #function,
+                                                line: UInt = #line) throws -> CapturedResponse
+    where ARGS: Sequence,
+          ARGS.Element == String {
+                  
+          return try self.waitAndCaptureResponse(arguments: arguments,
+                                             environment: environment,
+                                             currentDirectory: currentDirectory,
+                                             standardInput: standardInput,
+                                             outputOptions: outputOptions,
+                                             runningEventHandlerOn: runningEventHandlerOn,
+                                             processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                             eventHandler: eventHandler,
+                                             responseParser: responseParser,
+                                             timeout: timeout,
+                                             userInfo: userInfo,
+                                             stackTrace: .init(filePath: filePath, function: function, line: line))
+              
+    }
+    
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - responseType: The type of object to containd the captured response
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns the parsed CapturedResponse object
+    func waitAndCaptureResponse<ARGS,
+                              EventData,
+                              CapturedResponse>(arguments: ARGS,
+                                                environment: [String: String]? = nil,
+                                                currentDirectory: URL? = nil,
+                                                standardInput: Any? = nil,
+                                                outputOptions: CLIOutputOptions = .captureAll,
+                                                runningEventHandlerOn: DispatchQueue? = nil,
+                                                processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                                withResponseType responseType: CapturedResponse.Type,
+                                                timeout: DispatchTime = .distantFuture,
+                                                userInfo: [String: Any] = [:],
+                                                filePath: StaticString = #file,
+                                                function: StaticString = #function,
+                                                line: UInt = #line) throws -> CapturedResponse
+        where ARGS: Sequence,
+              ARGS.Element == String,
+              CapturedResponse: CLICapturedResponse {
+                  
+          return try self.waitAndCaptureResponse(arguments: arguments,
+                                                 environment: environment,
+                                                 currentDirectory: currentDirectory,
+                                                 standardInput: standardInput,
+                                                 outputOptions: outputOptions,
+                                                 runningEventHandlerOn: runningEventHandlerOn,
+                                                 processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                                 eventHandler: eventHandler,
+                                                 withResponseType: responseType,
+                                                 timeout: timeout,
+                                                 userInfo: userInfo,
+                                                 stackTrace: .init(filePath: filePath, function: function, line: line))
+    }
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - dataType: The type of data object to containd the captured response
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns the parsed CLICapturedDataResponse object
+    func waitAndCaptureDataResponse<ARGS,
+                                  EventData,
+                                  ResponseData>(arguments: ARGS,
+                                                environment: [String: String]? = nil,
+                                                currentDirectory: URL? = nil,
+                                                standardInput: Any? = nil,
+                                                outputOptions: CLIOutputOptions = .captureAll,
+                                                runningEventHandlerOn: DispatchQueue? = nil,
+                                                processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                                withDataType dataType: ResponseData.Type,
+                                                timeout: DispatchTime = .distantFuture,
+                                                userInfo: [String: Any] = [:],
+                                                filePath: StaticString = #file,
+                                                function: StaticString = #function,
+                                                line: UInt = #line) throws -> CLICapturedDataResponse<ResponseData>
+    where ARGS: Sequence, ARGS.Element == String {
+        return try self.waitAndCaptureDataResponse(arguments: arguments,
+                                                   environment: environment,
+                                                   currentDirectory: currentDirectory,
+                                                   standardInput: standardInput,
+                                                   outputOptions: outputOptions,
+                                                   runningEventHandlerOn: runningEventHandlerOn,
+                                                   processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                                   eventHandler: eventHandler,
+                                                   withDataType: dataType,
+                                                   timeout: timeout,
+                                                   userInfo: userInfo,
+                                                   stackTrace: .init(filePath: filePath, function: function, line: line))
+    }
+    
+    /// Execute core process and return the output as string objects
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the cli process outputs
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns:  Returns the parsed CLICapturedStringResponse object
+    func waitAndCaptureStringResponse<ARGS,
+                                    EventData>(arguments: ARGS,
+                                               environment: [String: String]? = nil,
+                                               currentDirectory: URL? = nil,
+                                               standardInput: Any? = nil,
+                                               outputOptions: CLIOutputOptions = .captureAll,
+                                               runningEventHandlerOn: DispatchQueue? = nil,
+                                               processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                               eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                               timeout: DispatchTime = .distantFuture,
+                                               userInfo: [String: Any] = [:],
+                                               filePath: StaticString = #file,
+                                               function: StaticString = #function,
+                                               line: UInt = #line) throws -> CLICapturedStringResponse
+        where ARGS: Sequence, ARGS.Element == String {
+            
+            return try self.waitAndCaptureStringResponse(arguments: arguments,
+                                                         environment: environment,
+                                                         currentDirectory: currentDirectory,
+                                                         standardInput: standardInput,
+                                                         outputOptions: outputOptions,
+                                                         runningEventHandlerOn: runningEventHandlerOn,
+                                                         processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                                         eventHandler: eventHandler,
+                                                         timeout: timeout,
+                                                         userInfo: userInfo,
+                                                         stackTrace: .init(filePath: filePath, function: function, line: line))
+    
+    }
+    
+}
+#endif
+
 // MARK: waitAnd Methods no eventHandle parameter
 public extension CLICapture {
     
@@ -1437,7 +3959,10 @@ public extension CLICapture {
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the core process outputs
     ///   - responseParser: Closure used to parse data into CapturedResponse object
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     /// - Returns: Returns the parsed CapturedResponse object
     func waitAndCaptureResponse<ARGS,
                               CapturedData,
@@ -1449,7 +3974,10 @@ public extension CLICapture {
                                                 responseParser: @escaping (_ exitStatusCode: Int32,
                                                                            _ captureOptions: CLICaptureOptions,
                                                                            _ capturedEvents: [CLICapturedOutputEvent<CapturedData>]) throws -> CapturedResponse,
-                                                timeout: DispatchTime = .distantFuture) throws -> CapturedResponse
+                                                processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                timeout: DispatchTime = .distantFuture,
+                                                userInfo: [String: Any] = [:],
+                                                stackTrace: CLIStackTrace) throws -> CapturedResponse
     where ARGS: Sequence,
           ARGS.Element == String {
                   
@@ -1461,6 +3989,9 @@ public extension CLICapture {
                                          currentDirectory: currentDirectory,
                                          standardInput: standardInput,
                                          outputOptions: outputOptions,
+                                         userInfo: userInfo,
+                                         stackTrace: stackTrace.stacking(),
+                                         processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                          responseParser: responseParser) {
             (_ sender: Process, _ response: CapturedResponse?, _ error: Swift.Error?) -> Void in
             rtn = response
@@ -1490,7 +4021,10 @@ public extension CLICapture {
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the core process outputs
     ///   - responseType: The type of object to containd the captured response
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     /// - Returns: Returns the parsed CapturedResponse object
     func waitAndCaptureResponse<ARGS,
                                 CapturedResponse>(arguments: ARGS,
@@ -1499,7 +4033,10 @@ public extension CLICapture {
                                                   standardInput: Any? = nil,
                                                   outputOptions: CLIOutputOptions = .captureAll,
                                                   withResponseType responseType: CapturedResponse.Type,
-                                                  timeout: DispatchTime = .distantFuture) throws -> CapturedResponse
+                                                  processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                  timeout: DispatchTime = .distantFuture,
+                                                  userInfo: [String: Any] = [:],
+                                                  stackTrace: CLIStackTrace) throws -> CapturedResponse
         where ARGS: Sequence,
               ARGS.Element == String,
               CapturedResponse: CLICapturedResponse {
@@ -1512,6 +4049,9 @@ public extension CLICapture {
                                            currentDirectory: currentDirectory,
                                            standardInput: standardInput,
                                            outputOptions: outputOptions,
+                                           userInfo: userInfo,
+                                           stackTrace: stackTrace.stacking(),
+                                           processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                            withResponseType: responseType) {
               (_ sender: Process, _ response: CapturedResponse?, _ error: Swift.Error?) -> Void in
               rtn = response
@@ -1539,7 +4079,10 @@ public extension CLICapture {
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the core process outputs
     ///   - dataType: The type of data object to containd the captured response
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     /// - Returns: Returns the parsed CLICapturedDataResponse object
     func waitAndCaptureDataResponse<ARGS,
                                     ResponseData>(arguments: ARGS,
@@ -1548,7 +4091,10 @@ public extension CLICapture {
                                                   standardInput: Any? = nil,
                                                   outputOptions: CLIOutputOptions = .captureAll,
                                                   withDataType dataType: ResponseData.Type,
-                                                  timeout: DispatchTime = .distantFuture) throws -> CLICapturedDataResponse<ResponseData>
+                                                  processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                  timeout: DispatchTime = .distantFuture,
+                                                  userInfo: [String: Any] = [:],
+                                                  stackTrace: CLIStackTrace) throws -> CLICapturedDataResponse<ResponseData>
     where ARGS: Sequence, ARGS.Element == String {
         let semaphore = DispatchSemaphore(value: 0)
         var rtn: CLICapturedDataResponse<ResponseData>? = nil
@@ -1558,6 +4104,9 @@ public extension CLICapture {
                                              currentDirectory: currentDirectory,
                                              standardInput: standardInput,
                                              outputOptions: outputOptions,
+                                             userInfo: userInfo,
+                                             stackTrace: stackTrace.stacking(),
+                                             processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                              withDataType: dataType) {
             (_ sender: Process,
              _ response: CLICapturedDataResponse<ResponseData>?,
@@ -1587,14 +4136,20 @@ public extension CLICapture {
     ///   - currentDirectory: The current working directory to set
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the cli process outputs
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     /// - Returns:  Returns the parsed CLICapturedStringResponse object
     func waitAndCaptureStringResponse<ARGS>(arguments: ARGS,
                                             environment: [String: String]? = nil,
                                             currentDirectory: URL? = nil,
                                             standardInput: Any? = nil,
                                             outputOptions: CLIOutputOptions = .captureAll,
-                                            timeout: DispatchTime = .distantFuture) throws -> CLICapturedStringResponse
+                                            processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                            timeout: DispatchTime = .distantFuture,
+                                            userInfo: [String: Any] = [:],
+                                            stackTrace: CLIStackTrace) throws -> CLICapturedStringResponse
         where ARGS: Sequence, ARGS.Element == String {
             
             let semaphore = DispatchSemaphore(value: 0)
@@ -1604,7 +4159,10 @@ public extension CLICapture {
                                                    environment: environment,
                                                    currentDirectory: currentDirectory,
                                                    standardInput: standardInput,
-                                                   outputOptions: outputOptions) {
+                                                   outputOptions: outputOptions,
+                                                   userInfo: userInfo,
+                                                   stackTrace: stackTrace.stacking(),
+                                                   processWroteToItsSTDOutput: processWroteToItsSTDOutput) {
                 (_ sender: Process,
                  _ response: CLICapturedStringResponse?,
                  _ error: Swift.Error?) -> Void in
@@ -1629,6 +4187,336 @@ public extension CLICapture {
     
 }
 
+#if swift(>=5.3)
+public extension CLICapture {
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - responseParser: Closure used to parse data into CapturedResponse object
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns the parsed CapturedResponse object
+    func waitAndCaptureResponse<ARGS,
+                              CapturedData,
+                              CapturedResponse>(arguments: ARGS,
+                                                environment: [String: String]? = nil,
+                                                currentDirectory: URL? = nil,
+                                                standardInput: Any? = nil,
+                                                outputOptions: CLIOutputOptions = .captureAll,
+                                                responseParser: @escaping (_ exitStatusCode: Int32,
+                                                                           _ captureOptions: CLICaptureOptions,
+                                                                           _ capturedEvents: [CLICapturedOutputEvent<CapturedData>]) throws -> CapturedResponse,
+                                                processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                timeout: DispatchTime = .distantFuture,
+                                                userInfo: [String: Any] = [:],
+                                                filePath: StaticString = #filePath,
+                                                function: StaticString = #function,
+                                                line: UInt = #line) throws -> CapturedResponse
+    where ARGS: Sequence,
+          ARGS.Element == String {
+                  
+          return try self.waitAndCaptureResponse(arguments: arguments,
+                                                 environment: environment,
+                                                 currentDirectory: currentDirectory,
+                                                 standardInput: standardInput,
+                                                 outputOptions: outputOptions,
+                                                 responseParser: responseParser,
+                                                 processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                                 timeout: timeout,
+                                                 userInfo: userInfo,
+                                                 stackTrace: .init(filePath: filePath, function: function, line: line))
+              
+    }
+    
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - responseType: The type of object to containd the captured response
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns the parsed CapturedResponse object
+    func waitAndCaptureResponse<ARGS,
+                                CapturedResponse>(arguments: ARGS,
+                                                  environment: [String: String]? = nil,
+                                                  currentDirectory: URL? = nil,
+                                                  standardInput: Any? = nil,
+                                                  outputOptions: CLIOutputOptions = .captureAll,
+                                                  withResponseType responseType: CapturedResponse.Type,
+                                                  processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                  timeout: DispatchTime = .distantFuture,
+                                                  userInfo: [String: Any] = [:],
+                                                  filePath: StaticString = #filePath,
+                                                  function: StaticString = #function,
+                                                  line: UInt = #line) throws -> CapturedResponse
+        where ARGS: Sequence,
+              ARGS.Element == String,
+              CapturedResponse: CLICapturedResponse {
+                  
+          return try self.waitAndCaptureResponse(arguments: arguments,
+                                                       environment: environment,
+                                                       currentDirectory: currentDirectory,
+                                                       standardInput: standardInput,
+                                                       outputOptions: outputOptions,
+                                                 withResponseType: responseType,
+                                                       processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                                       timeout: timeout,
+                                                       userInfo: userInfo,
+                                                       stackTrace: .init(filePath: filePath, function: function, line: line))
+    }
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - dataType: The type of data object to containd the captured response
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns the parsed CLICapturedDataResponse object
+    func waitAndCaptureDataResponse<ARGS,
+                                    ResponseData>(arguments: ARGS,
+                                                  environment: [String: String]? = nil,
+                                                  currentDirectory: URL? = nil,
+                                                  standardInput: Any? = nil,
+                                                  outputOptions: CLIOutputOptions = .captureAll,
+                                                  withDataType dataType: ResponseData.Type,
+                                                  processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                  timeout: DispatchTime = .distantFuture,
+                                                  userInfo: [String: Any] = [:],
+                                                  filePath: StaticString = #filePath,
+                                                  function: StaticString = #function,
+                                                  line: UInt = #line) throws -> CLICapturedDataResponse<ResponseData>
+    where ARGS: Sequence, ARGS.Element == String {
+        return try self.waitAndCaptureDataResponse(arguments: arguments,
+                                                     environment: environment,
+                                                     currentDirectory: currentDirectory,
+                                                     standardInput: standardInput,
+                                                     outputOptions: outputOptions,
+                                                   withDataType: dataType,
+                                                     processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                                     timeout: timeout,
+                                                     userInfo: userInfo,
+                                                     stackTrace: .init(filePath: filePath, function: function, line: line))
+    }
+    
+    /// Execute core process and return the output as string objects
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the cli process outputs
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns:  Returns the parsed CLICapturedStringResponse object
+    func waitAndCaptureStringResponse<ARGS>(arguments: ARGS,
+                                            environment: [String: String]? = nil,
+                                            currentDirectory: URL? = nil,
+                                            standardInput: Any? = nil,
+                                            outputOptions: CLIOutputOptions = .captureAll,
+                                            processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                            timeout: DispatchTime = .distantFuture,
+                                            userInfo: [String: Any] = [:],
+                                            filePath: StaticString = #filePath,
+                                            function: StaticString = #function,
+                                            line: UInt = #line) throws -> CLICapturedStringResponse
+        where ARGS: Sequence, ARGS.Element == String {
+            
+            return try self.waitAndCaptureStringResponse(arguments: arguments,
+                                                         environment: environment,
+                                                         currentDirectory: currentDirectory,
+                                                         standardInput: standardInput,
+                                                         outputOptions: outputOptions,
+                                                         processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                                         timeout: timeout,
+                                                         userInfo: userInfo,
+                                                         stackTrace: .init(filePath: filePath, function: function, line: line))
+    
+    }
+    
+}
+#else
+public extension CLICapture {
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - responseParser: Closure used to parse data into CapturedResponse object
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns the parsed CapturedResponse object
+    func waitAndCaptureResponse<ARGS,
+                              CapturedData,
+                              CapturedResponse>(arguments: ARGS,
+                                                environment: [String: String]? = nil,
+                                                currentDirectory: URL? = nil,
+                                                standardInput: Any? = nil,
+                                                outputOptions: CLIOutputOptions = .captureAll,
+                                                responseParser: @escaping (_ exitStatusCode: Int32,
+                                                                           _ captureOptions: CLICaptureOptions,
+                                                                           _ capturedEvents: [CLICapturedOutputEvent<CapturedData>]) throws -> CapturedResponse,
+                                                processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                timeout: DispatchTime = .distantFuture,
+                                                userInfo: [String: Any] = [:],
+                                                filePath: StaticString = #file,
+                                                function: StaticString = #function,
+                                                line: UInt = #line) throws -> CapturedResponse
+    where ARGS: Sequence,
+          ARGS.Element == String {
+                  
+          return try self.waitAndCaptureResponse(arguments: arguments,
+                                                 environment: environment,
+                                                 currentDirectory: currentDirectory,
+                                                 standardInput: standardInput,
+                                                 outputOptions: outputOptions,
+                                                 responseParser: responseParser,
+                                                 processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                                 timeout: timeout,
+                                                 userInfo: userInfo,
+                                                 stackTrace: .init(filePath: filePath, function: function, line: line))
+              
+    }
+    
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - responseType: The type of object to containd the captured response
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns the parsed CapturedResponse object
+    func waitAndCaptureResponse<ARGS,
+                                CapturedResponse>(arguments: ARGS,
+                                                  environment: [String: String]? = nil,
+                                                  currentDirectory: URL? = nil,
+                                                  standardInput: Any? = nil,
+                                                  outputOptions: CLIOutputOptions = .captureAll,
+                                                  withResponseType responseType: CapturedResponse.Type,
+                                                  processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                  timeout: DispatchTime = .distantFuture,
+                                                  userInfo: [String: Any] = [:],
+                                                  filePath: StaticString = #file,
+                                                  function: StaticString = #function,
+                                                  line: UInt = #line) throws -> CapturedResponse
+        where ARGS: Sequence,
+              ARGS.Element == String,
+              CapturedResponse: CLICapturedResponse {
+                  
+          return try self.waitAndCaptureResponse(arguments: arguments,
+                                                       environment: environment,
+                                                       currentDirectory: currentDirectory,
+                                                       standardInput: standardInput,
+                                                       outputOptions: outputOptions,
+                                                 withResponseType: responseType,
+                                                       processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                                       timeout: timeout,
+                                                       userInfo: userInfo,
+                                                       stackTrace: .init(filePath: filePath, function: function, line: line))
+    }
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - dataType: The type of data object to containd the captured response
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns the parsed CLICapturedDataResponse object
+    func waitAndCaptureDataResponse<ARGS,
+                                    ResponseData>(arguments: ARGS,
+                                                  environment: [String: String]? = nil,
+                                                  currentDirectory: URL? = nil,
+                                                  standardInput: Any? = nil,
+                                                  outputOptions: CLIOutputOptions = .captureAll,
+                                                  withDataType dataType: ResponseData.Type,
+                                                  processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                  timeout: DispatchTime = .distantFuture,
+                                                  userInfo: [String: Any] = [:],
+                                                  filePath: StaticString = #file,
+                                                  function: StaticString = #function,
+                                                  line: UInt = #line) throws -> CLICapturedDataResponse<ResponseData>
+    where ARGS: Sequence, ARGS.Element == String {
+        return try self.waitAndCaptureDataResponse(arguments: arguments,
+                                                     environment: environment,
+                                                     currentDirectory: currentDirectory,
+                                                     standardInput: standardInput,
+                                                     outputOptions: outputOptions,
+                                                   withDataType: dataType,
+                                                     processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                                     timeout: timeout,
+                                                     userInfo: userInfo,
+                                                     stackTrace: .init(filePath: filePath, function: function, line: line))
+    }
+    
+    /// Execute core process and return the output as string objects
+    /// - Parameters:
+    ///   - arguments: The arguments to pass to the core process
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the cli process outputs
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns:  Returns the parsed CLICapturedStringResponse object
+    func waitAndCaptureStringResponse<ARGS>(arguments: ARGS,
+                                            environment: [String: String]? = nil,
+                                            currentDirectory: URL? = nil,
+                                            standardInput: Any? = nil,
+                                            outputOptions: CLIOutputOptions = .captureAll,
+                                            processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                            timeout: DispatchTime = .distantFuture,
+                                            userInfo: [String: Any] = [:],
+                                            filePath: StaticString = #file,
+                                            function: StaticString = #function,
+                                            line: UInt = #line) throws -> CLICapturedStringResponse
+        where ARGS: Sequence, ARGS.Element == String {
+            
+            return try self.waitAndCaptureStringResponse(arguments: arguments,
+                                                         environment: environment,
+                                                         currentDirectory: currentDirectory,
+                                                         standardInput: standardInput,
+                                                         outputOptions: outputOptions,
+                                                         processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                                         timeout: timeout,
+                                                         userInfo: userInfo,
+                                                         stackTrace: .init(filePath: filePath, function: function, line: line))
+    
+    }
+    
+}
+#endif
+
 
 // MARK: waitAnd (No 'arguments' Parameter) Methods
 public extension CLICapture {
@@ -1640,16 +4528,22 @@ public extension CLICapture {
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the core process outputs
     ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - eventHandler: The event handler to pass Process events to
     ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     /// - Returns: Returns terminationStatus of the process executed
     func waitAndCapture<DATA>(environment: [String: String]? = nil,
                               currentDirectory: URL? = nil,
                               standardInput: Any? = nil,
                               outputOptions: CLIOutputOptions = .all,
                               runningEventHandlerOn: DispatchQueue? = nil,
+                              processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                               eventHandler: @escaping CapturedOutputEventHandler<DATA>,
-                              timeout: DispatchTime = .distantFuture) throws -> Int32 {
+                              timeout: DispatchTime = .distantFuture,
+                              userInfo: [String: Any] = [:],
+                              stackTrace: CLIStackTrace) throws -> Int32 {
         
         return try self.waitAndCapture(arguments: Array<String>(),
                                        environment: environment,
@@ -1657,8 +4551,11 @@ public extension CLICapture {
                                        standardInput: standardInput,
                                        outputOptions: outputOptions,
                                        runningEventHandlerOn: runningEventHandlerOn,
+                                       processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                        eventHandler: eventHandler,
-                                       timeout: timeout)
+                                       timeout: timeout,
+                                       userInfo: userInfo,
+                                       stackTrace: stackTrace.stacking())
         
         
     }
@@ -1669,20 +4566,29 @@ public extension CLICapture {
     ///   - currentDirectory: The current working directory to set
     ///   - standardInput: The standard input to set the core process
     ///   - passthrougOptions: The passthrough options for the core process outputs
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     /// - Returns: Returns terminationStatus of the process executed
     func executeAndWait(environment: [String: String]? = nil,
                         currentDirectory: URL? = nil,
                         standardInput: Any? = nil,
                         passthrougOptions: CLIPassthroughOptions = .all,
-                        timeout: DispatchTime = .distantFuture) throws -> Int32 {
+                        processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                        timeout: DispatchTime = .distantFuture,
+                        userInfo: [String: Any] = [:],
+                        stackTrace: CLIStackTrace) throws -> Int32 {
         
         return try self.executeAndWait(arguments: Array<String>(),
                                        environment: environment,
                                        currentDirectory: currentDirectory,
                                        standardInput: standardInput,
                                        passthrougOptions: passthrougOptions,
-                                       timeout: timeout)
+                                       processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                       timeout: timeout,
+                                       userInfo: userInfo,
+                                       stackTrace: stackTrace.stacking())
         
     }
     
@@ -1693,9 +4599,12 @@ public extension CLICapture {
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the core process outputs
     ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - eventHandler: The event handler to pass data events to
     ///   - responseParser: Closure used to parse data into CapturedResponse object
     ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     /// - Returns: Returns the parsed CapturedResponse object
     func waitAndCaptureResponse<EventData,
                                 CapturedData,
@@ -1704,11 +4613,14 @@ public extension CLICapture {
                                                   standardInput: Any? = nil,
                                                   outputOptions: CLIOutputOptions = .captureAll,
                                                   runningEventHandlerOn: DispatchQueue? = nil,
+                                                  processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                                   eventHandler: @escaping CapturedOutputEventHandler<EventData>,
                                                   responseParser: @escaping (_ exitStatusCode: Int32,
                                                                            _ captureOptions: CLICaptureOptions,
                                                                            _ capturedEvents: [CLICapturedOutputEvent<CapturedData>]) throws -> CapturedResponse,
-                                                  timeout: DispatchTime = .distantFuture) throws -> CapturedResponse {
+                                                  timeout: DispatchTime = .distantFuture,
+                                                  userInfo: [String: Any] = [:],
+                                                  stackTrace: CLIStackTrace) throws -> CapturedResponse {
                   
         return try self.waitAndCaptureResponse(arguments: Array<String>(),
                                                environment: environment,
@@ -1716,9 +4628,12 @@ public extension CLICapture {
                                                standardInput: standardInput,
                                                outputOptions: outputOptions,
                                                runningEventHandlerOn: runningEventHandlerOn,
+                                               processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                                eventHandler: eventHandler,
                                                responseParser: responseParser,
-                                               timeout: timeout)
+                                               timeout: timeout,
+                                               userInfo: userInfo,
+                                               stackTrace: stackTrace.stacking())
     }
     
     
@@ -1729,9 +4644,12 @@ public extension CLICapture {
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the core process outputs
     ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - eventHandler: The event handler to pass data events to
     ///   - responseType: The type of object to containd the captured response
     ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     /// - Returns: Returns the parsed CapturedResponse object
     func waitAndCaptureResponse<EventData,
                               CapturedResponse>(environment: [String: String]? = nil,
@@ -1739,9 +4657,12 @@ public extension CLICapture {
                                                 standardInput: Any? = nil,
                                                 outputOptions: CLIOutputOptions = .captureAll,
                                                 runningEventHandlerOn: DispatchQueue? = nil,
+                                                processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                                 eventHandler: @escaping CapturedOutputEventHandler<EventData>,
                                                 withResponseType responseType: CapturedResponse.Type,
-                                                timeout: DispatchTime = .distantFuture) throws -> CapturedResponse
+                                                timeout: DispatchTime = .distantFuture,
+                                                userInfo: [String: Any] = [:],
+                                                stackTrace: CLIStackTrace) throws -> CapturedResponse
     where CapturedResponse: CLICapturedResponse {
         
         return try self.waitAndCaptureResponse(arguments: Array<String>(),
@@ -1750,9 +4671,12 @@ public extension CLICapture {
                                                standardInput: standardInput,
                                                outputOptions: outputOptions,
                                                runningEventHandlerOn: runningEventHandlerOn,
+                                               processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                                eventHandler: eventHandler,
                                                withResponseType: responseType,
-                                               timeout: timeout)
+                                               timeout: timeout,
+                                               userInfo: userInfo,
+                                               stackTrace: stackTrace.stacking())
     }
     
     /// Execute core process and return the output as data events
@@ -1762,9 +4686,12 @@ public extension CLICapture {
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the core process outputs
     ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - eventHandler: The event handler to pass data events to
     ///   - dataType: The type of data object to containd the captured response
     ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     /// - Returns: Returns the parsed CLICapturedDataResponse object
     func waitAndCaptureDataResponse<EventData,
                                     ResponseData>(environment: [String: String]? = nil,
@@ -1772,9 +4699,12 @@ public extension CLICapture {
                                                   standardInput: Any? = nil,
                                                   outputOptions: CLIOutputOptions = .captureAll,
                                                   runningEventHandlerOn: DispatchQueue? = nil,
+                                                  processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                                   eventHandler: @escaping CapturedOutputEventHandler<EventData>,
                                                   withDataType dataType: ResponseData.Type,
-                                                  timeout: DispatchTime = .distantFuture) throws -> CLICapturedDataResponse<ResponseData> {
+                                                  timeout: DispatchTime = .distantFuture,
+                                                  userInfo: [String: Any] = [:],
+                                                  stackTrace: CLIStackTrace) throws -> CLICapturedDataResponse<ResponseData> {
         
         return try self.waitAndCaptureDataResponse(arguments: Array<String>(),
                                                    environment: environment,
@@ -1782,9 +4712,12 @@ public extension CLICapture {
                                                    standardInput: standardInput,
                                                    outputOptions: outputOptions,
                                                    runningEventHandlerOn: runningEventHandlerOn,
+                                                   processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                                    eventHandler: eventHandler,
                                                    withDataType: dataType,
-                                                   timeout: timeout)
+                                                   timeout: timeout,
+                                                   userInfo: userInfo,
+                                                   stackTrace: stackTrace.stacking())
     }
     
     /// Execute core process and return the output as string objects
@@ -1794,16 +4727,22 @@ public extension CLICapture {
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the cli process outputs
     ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - eventHandler: The event handler to pass data events to
     ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     /// - Returns: Returns the parsed CLICapturedStringResponse object
     func waitAndCaptureStringResponse<EventData>(environment: [String: String]? = nil,
                                                  currentDirectory: URL? = nil,
                                                  standardInput: Any? = nil,
                                                  outputOptions: CLIOutputOptions = .captureAll,
                                                  runningEventHandlerOn: DispatchQueue? = nil,
+                                                 processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                                  eventHandler: @escaping CapturedOutputEventHandler<EventData>,
-                                                 timeout: DispatchTime = .distantFuture) throws -> CLICapturedStringResponse {
+                                                 timeout: DispatchTime = .distantFuture,
+                                                 userInfo: [String: Any] = [:],
+                                                 stackTrace: CLIStackTrace) throws -> CLICapturedStringResponse {
             
         return try self.waitAndCaptureStringResponse(arguments: Array<String>(),
                                                      environment: environment,
@@ -1811,12 +4750,511 @@ public extension CLICapture {
                                                      standardInput: standardInput,
                                                      outputOptions: outputOptions,
                                                      runningEventHandlerOn: runningEventHandlerOn,
+                                                     processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                                      eventHandler: eventHandler,
-                                                     timeout: timeout)
+                                                     timeout: timeout,
+                                                     userInfo: userInfo,
+                                                     stackTrace: stackTrace.stacking())
     
     }
     
 }
+
+#if swift(>=5.3)
+public extension CLICapture {
+    
+    /// Execute the CLI process and capture output events
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass Process events to
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns terminationStatus of the process executed
+    func waitAndCapture<DATA>(environment: [String: String]? = nil,
+                              currentDirectory: URL? = nil,
+                              standardInput: Any? = nil,
+                              outputOptions: CLIOutputOptions = .all,
+                              runningEventHandlerOn: DispatchQueue? = nil,
+                              processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                              eventHandler: @escaping CapturedOutputEventHandler<DATA>,
+                              timeout: DispatchTime = .distantFuture,
+                              userInfo: [String: Any] = [:],
+                              filePath: StaticString = #filePath,
+                              function: StaticString = #function,
+                              line: UInt = #line) throws -> Int32 {
+        
+        return try self.waitAndCapture(arguments: Array<String>(),
+                                       environment: environment,
+                                       currentDirectory: currentDirectory,
+                                       standardInput: standardInput,
+                                       outputOptions: outputOptions,
+                                       runningEventHandlerOn: runningEventHandlerOn,
+                                       processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                       eventHandler: eventHandler,
+                                       timeout: timeout,
+                                       userInfo: userInfo,
+                                       stackTrace: .init(filePath: filePath, function: function, line: line))
+        
+        
+    }
+    
+    /// Execute the core process
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - passthrougOptions: The passthrough options for the core process outputs
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns terminationStatus of the process executed
+    func executeAndWait(environment: [String: String]? = nil,
+                        currentDirectory: URL? = nil,
+                        standardInput: Any? = nil,
+                        passthrougOptions: CLIPassthroughOptions = .all,
+                        processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                        timeout: DispatchTime = .distantFuture,
+                        userInfo: [String: Any] = [:],
+                        filePath: StaticString = #filePath,
+                        function: StaticString = #function,
+                        line: UInt = #line) throws -> Int32 {
+        
+        return try self.executeAndWait(arguments: Array<String>(),
+                                       environment: environment,
+                                       currentDirectory: currentDirectory,
+                                       standardInput: standardInput,
+                                       passthrougOptions: passthrougOptions,
+                                       processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                       timeout: timeout,
+                                       userInfo: userInfo,
+                                       stackTrace: .init(filePath: filePath, function: function, line: line))
+        
+    }
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - responseParser: Closure used to parse data into CapturedResponse object
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns the parsed CapturedResponse object
+    func waitAndCaptureResponse<EventData,
+                                CapturedData,
+                                CapturedResponse>(environment: [String: String]? = nil,
+                                                  currentDirectory: URL? = nil,
+                                                  standardInput: Any? = nil,
+                                                  outputOptions: CLIOutputOptions = .captureAll,
+                                                  runningEventHandlerOn: DispatchQueue? = nil,
+                                                  processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                  eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                                  responseParser: @escaping (_ exitStatusCode: Int32,
+                                                                           _ captureOptions: CLICaptureOptions,
+                                                                           _ capturedEvents: [CLICapturedOutputEvent<CapturedData>]) throws -> CapturedResponse,
+                                                  timeout: DispatchTime = .distantFuture,
+                                                  userInfo: [String: Any] = [:],
+                                                  filePath: StaticString = #filePath,
+                                                  function: StaticString = #function,
+                                                  line: UInt = #line) throws -> CapturedResponse {
+                  
+        return try self.waitAndCaptureResponse(arguments: Array<String>(),
+                                               environment: environment,
+                                               currentDirectory: currentDirectory,
+                                               standardInput: standardInput,
+                                               outputOptions: outputOptions,
+                                               runningEventHandlerOn: runningEventHandlerOn,
+                                               processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                               eventHandler: eventHandler,
+                                               responseParser: responseParser,
+                                               timeout: timeout,
+                                               userInfo: userInfo,
+                                               stackTrace: .init(filePath: filePath, function: function, line: line))
+    }
+    
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - responseType: The type of object to containd the captured response
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns the parsed CapturedResponse object
+    func waitAndCaptureResponse<EventData,
+                              CapturedResponse>(environment: [String: String]? = nil,
+                                                currentDirectory: URL? = nil,
+                                                standardInput: Any? = nil,
+                                                outputOptions: CLIOutputOptions = .captureAll,
+                                                runningEventHandlerOn: DispatchQueue? = nil,
+                                                processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                                withResponseType responseType: CapturedResponse.Type,
+                                                timeout: DispatchTime = .distantFuture,
+                                                userInfo: [String: Any] = [:],
+                                                filePath: StaticString = #filePath,
+                                                function: StaticString = #function,
+                                                line: UInt = #line) throws -> CapturedResponse
+    where CapturedResponse: CLICapturedResponse {
+        
+        return try self.waitAndCaptureResponse(arguments: Array<String>(),
+                                               environment: environment,
+                                               currentDirectory: currentDirectory,
+                                               standardInput: standardInput,
+                                               outputOptions: outputOptions,
+                                               runningEventHandlerOn: runningEventHandlerOn,
+                                               processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                               eventHandler: eventHandler,
+                                               withResponseType: responseType,
+                                               timeout: timeout,
+                                               userInfo: userInfo,
+                                               stackTrace: .init(filePath: filePath, function: function, line: line))
+    }
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - dataType: The type of data object to containd the captured response
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns the parsed CLICapturedDataResponse object
+    func waitAndCaptureDataResponse<EventData,
+                                    ResponseData>(environment: [String: String]? = nil,
+                                                  currentDirectory: URL? = nil,
+                                                  standardInput: Any? = nil,
+                                                  outputOptions: CLIOutputOptions = .captureAll,
+                                                  runningEventHandlerOn: DispatchQueue? = nil,
+                                                  processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                  eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                                  withDataType dataType: ResponseData.Type,
+                                                  timeout: DispatchTime = .distantFuture,
+                                                  userInfo: [String: Any] = [:],
+                                                  filePath: StaticString = #filePath,
+                                                  function: StaticString = #function,
+                                                  line: UInt = #line) throws -> CLICapturedDataResponse<ResponseData> {
+        
+        return try self.waitAndCaptureDataResponse(arguments: Array<String>(),
+                                                   environment: environment,
+                                                   currentDirectory: currentDirectory,
+                                                   standardInput: standardInput,
+                                                   outputOptions: outputOptions,
+                                                   runningEventHandlerOn: runningEventHandlerOn,
+                                                   processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                                   eventHandler: eventHandler,
+                                                   withDataType: dataType,
+                                                   timeout: timeout,
+                                                   userInfo: userInfo,
+                                                   stackTrace: .init(filePath: filePath, function: function, line: line))
+    }
+    
+    /// Execute core process and return the output as string objects
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the cli process outputs
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns the parsed CLICapturedStringResponse object
+    func waitAndCaptureStringResponse<EventData>(environment: [String: String]? = nil,
+                                                 currentDirectory: URL? = nil,
+                                                 standardInput: Any? = nil,
+                                                 outputOptions: CLIOutputOptions = .captureAll,
+                                                 runningEventHandlerOn: DispatchQueue? = nil,
+                                                 processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                 eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                                 timeout: DispatchTime = .distantFuture,
+                                                 userInfo: [String: Any] = [:],
+                                                 filePath: StaticString = #filePath,
+                                                 function: StaticString = #function,
+                                                 line: UInt = #line) throws -> CLICapturedStringResponse {
+            
+        return try self.waitAndCaptureStringResponse(arguments: Array<String>(),
+                                                     environment: environment,
+                                                     currentDirectory: currentDirectory,
+                                                     standardInput: standardInput,
+                                                     outputOptions: outputOptions,
+                                                     runningEventHandlerOn: runningEventHandlerOn,
+                                                     processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                                     eventHandler: eventHandler,
+                                                     timeout: timeout,
+                                                     userInfo: userInfo,
+                                                     stackTrace: .init(filePath: filePath, function: function, line: line))
+    
+    }
+    
+}
+#else
+public extension CLICapture {
+    
+    /// Execute the CLI process and capture output events
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass Process events to
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns terminationStatus of the process executed
+    func waitAndCapture<DATA>(environment: [String: String]? = nil,
+                              currentDirectory: URL? = nil,
+                              standardInput: Any? = nil,
+                              outputOptions: CLIOutputOptions = .all,
+                              runningEventHandlerOn: DispatchQueue? = nil,
+                              processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                              eventHandler: @escaping CapturedOutputEventHandler<DATA>,
+                              timeout: DispatchTime = .distantFuture,
+                              userInfo: [String: Any] = [:],
+                              filePath: StaticString = #file,
+                              function: StaticString = #function,
+                              line: UInt = #line) throws -> Int32 {
+        
+        return try self.waitAndCapture(arguments: Array<String>(),
+                                       environment: environment,
+                                       currentDirectory: currentDirectory,
+                                       standardInput: standardInput,
+                                       outputOptions: outputOptions,
+                                       runningEventHandlerOn: runningEventHandlerOn,
+                                       processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                       eventHandler: eventHandler,
+                                       timeout: timeout,
+                                       userInfo: userInfo,
+                                       stackTrace: .init(filePath: filePath, function: function, line: line))
+        
+        
+    }
+    
+    /// Execute the core process
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - passthrougOptions: The passthrough options for the core process outputs
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns terminationStatus of the process executed
+    func executeAndWait(environment: [String: String]? = nil,
+                        currentDirectory: URL? = nil,
+                        standardInput: Any? = nil,
+                        passthrougOptions: CLIPassthroughOptions = .all,
+                        processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                        timeout: DispatchTime = .distantFuture,
+                        userInfo: [String: Any] = [:],
+                        filePath: StaticString = #file,
+                        function: StaticString = #function,
+                        line: UInt = #line) throws -> Int32 {
+        
+        return try self.executeAndWait(arguments: Array<String>(),
+                                       environment: environment,
+                                       currentDirectory: currentDirectory,
+                                       standardInput: standardInput,
+                                       passthrougOptions: passthrougOptions,
+                                       processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                       timeout: timeout,
+                                       userInfo: userInfo,
+                                       stackTrace: .init(filePath: filePath, function: function, line: line))
+        
+    }
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - responseParser: Closure used to parse data into CapturedResponse object
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns the parsed CapturedResponse object
+    func waitAndCaptureResponse<EventData,
+                                CapturedData,
+                                CapturedResponse>(environment: [String: String]? = nil,
+                                                  currentDirectory: URL? = nil,
+                                                  standardInput: Any? = nil,
+                                                  outputOptions: CLIOutputOptions = .captureAll,
+                                                  runningEventHandlerOn: DispatchQueue? = nil,
+                                                  processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                  eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                                  responseParser: @escaping (_ exitStatusCode: Int32,
+                                                                           _ captureOptions: CLICaptureOptions,
+                                                                           _ capturedEvents: [CLICapturedOutputEvent<CapturedData>]) throws -> CapturedResponse,
+                                                  timeout: DispatchTime = .distantFuture,
+                                                  userInfo: [String: Any] = [:],
+                                                  filePath: StaticString = #file,
+                                                  function: StaticString = #function,
+                                                  line: UInt = #line) throws -> CapturedResponse {
+                  
+        return try self.waitAndCaptureResponse(arguments: Array<String>(),
+                                               environment: environment,
+                                               currentDirectory: currentDirectory,
+                                               standardInput: standardInput,
+                                               outputOptions: outputOptions,
+                                               runningEventHandlerOn: runningEventHandlerOn,
+                                               processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                               eventHandler: eventHandler,
+                                               responseParser: responseParser,
+                                               timeout: timeout,
+                                               userInfo: userInfo,
+                                               stackTrace: .init(filePath: filePath, function: function, line: line))
+    }
+    
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - responseType: The type of object to containd the captured response
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns the parsed CapturedResponse object
+    func waitAndCaptureResponse<EventData,
+                              CapturedResponse>(environment: [String: String]? = nil,
+                                                currentDirectory: URL? = nil,
+                                                standardInput: Any? = nil,
+                                                outputOptions: CLIOutputOptions = .captureAll,
+                                                runningEventHandlerOn: DispatchQueue? = nil,
+                                                processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                                withResponseType responseType: CapturedResponse.Type,
+                                                timeout: DispatchTime = .distantFuture,
+                                                userInfo: [String: Any] = [:],
+                                                filePath: StaticString = #file,
+                                                function: StaticString = #function,
+                                                line: UInt = #line) throws -> CapturedResponse
+    where CapturedResponse: CLICapturedResponse {
+        
+        return try self.waitAndCaptureResponse(arguments: Array<String>(),
+                                               environment: environment,
+                                               currentDirectory: currentDirectory,
+                                               standardInput: standardInput,
+                                               outputOptions: outputOptions,
+                                               runningEventHandlerOn: runningEventHandlerOn,
+                                               processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                               eventHandler: eventHandler,
+                                               withResponseType: responseType,
+                                               timeout: timeout,
+                                               userInfo: userInfo,
+                                               stackTrace: .init(filePath: filePath, function: function, line: line))
+    }
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - dataType: The type of data object to containd the captured response
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns the parsed CLICapturedDataResponse object
+    func waitAndCaptureDataResponse<EventData,
+                                    ResponseData>(environment: [String: String]? = nil,
+                                                  currentDirectory: URL? = nil,
+                                                  standardInput: Any? = nil,
+                                                  outputOptions: CLIOutputOptions = .captureAll,
+                                                  runningEventHandlerOn: DispatchQueue? = nil,
+                                                  processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                  eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                                  withDataType dataType: ResponseData.Type,
+                                                  timeout: DispatchTime = .distantFuture,
+                                                  userInfo: [String: Any] = [:],
+                                                  filePath: StaticString = #file,
+                                                  function: StaticString = #function,
+                                                  line: UInt = #line) throws -> CLICapturedDataResponse<ResponseData> {
+        
+        return try self.waitAndCaptureDataResponse(arguments: Array<String>(),
+                                                   environment: environment,
+                                                   currentDirectory: currentDirectory,
+                                                   standardInput: standardInput,
+                                                   outputOptions: outputOptions,
+                                                   runningEventHandlerOn: runningEventHandlerOn,
+                                                   processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                                   eventHandler: eventHandler,
+                                                   withDataType: dataType,
+                                                   timeout: timeout,
+                                                   userInfo: userInfo,
+                                                   stackTrace: .init(filePath: filePath, function: function, line: line))
+    }
+    
+    /// Execute core process and return the output as string objects
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the cli process outputs
+    ///   - runningEventHandlerOn: The dispatch queue to call the event handler on
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - eventHandler: The event handler to pass data events to
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns the parsed CLICapturedStringResponse object
+    func waitAndCaptureStringResponse<EventData>(environment: [String: String]? = nil,
+                                                 currentDirectory: URL? = nil,
+                                                 standardInput: Any? = nil,
+                                                 outputOptions: CLIOutputOptions = .captureAll,
+                                                 runningEventHandlerOn: DispatchQueue? = nil,
+                                                 processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                 eventHandler: @escaping CapturedOutputEventHandler<EventData>,
+                                                 timeout: DispatchTime = .distantFuture,
+                                                 userInfo: [String: Any] = [:],
+                                                 filePath: StaticString = #file,
+                                                 function: StaticString = #function,
+                                                 line: UInt = #line) throws -> CLICapturedStringResponse {
+            
+        return try self.waitAndCaptureStringResponse(arguments: Array<String>(),
+                                                     environment: environment,
+                                                     currentDirectory: currentDirectory,
+                                                     standardInput: standardInput,
+                                                     outputOptions: outputOptions,
+                                                     runningEventHandlerOn: runningEventHandlerOn,
+                                                     processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                                     eventHandler: eventHandler,
+                                                     timeout: timeout,
+                                                     userInfo: userInfo,
+                                                     stackTrace: .init(filePath: filePath, function: function, line: line))
+    
+    }
+    
+}
+#endif
 
 // MARK: AndWait (No 'arguments', 'eventHandler' Parameters) Methods
 public extension CLICapture {
@@ -1828,7 +5266,10 @@ public extension CLICapture {
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the core process outputs
     ///   - responseParser: Closure used to parse data into CapturedResponse object
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     /// - Returns: Returns the parsed CapturedResponse object
     func waitAndCaptureResponse<CapturedData,
                                 CapturedResponse>(environment: [String: String]? = nil,
@@ -1838,7 +5279,10 @@ public extension CLICapture {
                                                   responseParser: @escaping (_ exitStatusCode: Int32,
                                                                            _ captureOptions: CLICaptureOptions,
                                                                            _ capturedEvents: [CLICapturedOutputEvent<CapturedData>]) throws -> CapturedResponse,
-                                                  timeout: DispatchTime = .distantFuture) throws -> CapturedResponse {
+                                                  processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                  timeout: DispatchTime = .distantFuture,
+                                                  userInfo: [String: Any] = [:],
+                                                  stackTrace: CLIStackTrace) throws -> CapturedResponse {
                   
         return try self.waitAndCaptureResponse(arguments: Array<String>(),
                                                environment: environment,
@@ -1846,7 +5290,10 @@ public extension CLICapture {
                                                standardInput: standardInput,
                                                outputOptions: outputOptions,
                                                responseParser: responseParser,
-                                               timeout: timeout)
+                                               processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                               timeout: timeout,
+                                               userInfo: userInfo,
+                                               stackTrace: stackTrace.stacking())
     }
     
     
@@ -1857,14 +5304,20 @@ public extension CLICapture {
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the core process outputs
     ///   - responseType: The type of object to containd the captured response
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     /// - Returns: Returns the parsed CapturedResponse object
     func waitAndCaptureResponse<CapturedResponse>(environment: [String: String]? = nil,
                                                   currentDirectory: URL? = nil,
                                                   standardInput: Any? = nil,
                                                   outputOptions: CLIOutputOptions = .captureAll,
                                                   withResponseType responseType: CapturedResponse.Type,
-                                                  timeout: DispatchTime = .distantFuture) throws -> CapturedResponse
+                                                  processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                  timeout: DispatchTime = .distantFuture,
+                                                  userInfo: [String: Any] = [:],
+                                                  stackTrace: CLIStackTrace) throws -> CapturedResponse
     where CapturedResponse: CLICapturedResponse {
         
         return try self.waitAndCaptureResponse(arguments: Array<String>(),
@@ -1873,7 +5326,10 @@ public extension CLICapture {
                                                standardInput: standardInput,
                                                outputOptions: outputOptions,
                                                withResponseType: responseType,
-                                               timeout: timeout)
+                                               processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                               timeout: timeout,
+                                               userInfo: userInfo,
+                                               stackTrace: stackTrace.stacking())
     }
     
     /// Execute core process and return the output as data events
@@ -1883,14 +5339,20 @@ public extension CLICapture {
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the core process outputs
     ///   - dataType: The type of data object to containd the captured response
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     /// - Returns: Returns the parsed CLICapturedDataResponse object
     func waitAndCaptureDataResponse<ResponseData>(environment: [String: String]? = nil,
                                                   currentDirectory: URL? = nil,
                                                   standardInput: Any? = nil,
                                                   outputOptions: CLIOutputOptions = .captureAll,
                                                   withDataType dataType: ResponseData.Type,
-                                                  timeout: DispatchTime = .distantFuture) throws -> CLICapturedDataResponse<ResponseData> {
+                                                  processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                  timeout: DispatchTime = .distantFuture,
+                                                  userInfo: [String: Any] = [:],
+                                                  stackTrace: CLIStackTrace) throws -> CLICapturedDataResponse<ResponseData> {
         
         return try self.waitAndCaptureDataResponse(arguments: Array<String>(),
                                                    environment: environment,
@@ -1898,7 +5360,10 @@ public extension CLICapture {
                                                    standardInput: standardInput,
                                                    outputOptions: outputOptions,
                                                    withDataType: dataType,
-                                                   timeout: timeout)
+                                                   processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                                   timeout: timeout,
+                                                   userInfo: userInfo,
+                                                   stackTrace: stackTrace.stacking())
     }
     
     /// Execute core process and return the output as string objects
@@ -1907,24 +5372,329 @@ public extension CLICapture {
     ///   - currentDirectory: The current working directory to set
     ///   - standardInput: The standard input to set the core process
     ///   - outputOptions: The capture / passthrough options for the cli process outputs
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
     ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    ///   - stackTrace: The calling stack trace
     /// - Returns: Returns the parsed CLICapturedStringResponse object
     func waitAndCaptureStringResponse(environment: [String: String]? = nil,
                                       currentDirectory: URL? = nil,
                                       standardInput: Any? = nil,
                                       outputOptions: CLIOutputOptions = .captureAll,
-                                      timeout: DispatchTime = .distantFuture) throws -> CLICapturedStringResponse {
+                                      processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                      timeout: DispatchTime = .distantFuture,
+                                      userInfo: [String: Any] = [:],
+                                      stackTrace: CLIStackTrace) throws -> CLICapturedStringResponse {
             
         return try self.waitAndCaptureStringResponse(arguments: Array<String>(),
                                                      environment: environment,
                                                      currentDirectory: currentDirectory,
                                                      standardInput: standardInput,
                                                      outputOptions: outputOptions,
-                                                     timeout: timeout)
+                                                     processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                                     timeout: timeout,
+                                                     userInfo: userInfo,
+                                                     stackTrace: stackTrace.stacking())
     
     }
     
 }
+
+#if swift(>=5.3)
+public extension CLICapture {
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - responseParser: Closure used to parse data into CapturedResponse object
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns the parsed CapturedResponse object
+    func waitAndCaptureResponse<CapturedData,
+                                CapturedResponse>(environment: [String: String]? = nil,
+                                                  currentDirectory: URL? = nil,
+                                                  standardInput: Any? = nil,
+                                                  outputOptions: CLIOutputOptions = .captureAll,
+                                                  responseParser: @escaping (_ exitStatusCode: Int32,
+                                                                           _ captureOptions: CLICaptureOptions,
+                                                                           _ capturedEvents: [CLICapturedOutputEvent<CapturedData>]) throws -> CapturedResponse,
+                                                  processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                  timeout: DispatchTime = .distantFuture,
+                                                  userInfo: [String: Any] = [:],
+                                                  filePath: StaticString = #filePath,
+                                                  function: StaticString = #function,
+                                                  line: UInt = #line) throws -> CapturedResponse {
+                  
+        return try self.waitAndCaptureResponse(arguments: Array<String>(),
+                                               environment: environment,
+                                               currentDirectory: currentDirectory,
+                                               standardInput: standardInput,
+                                               outputOptions: outputOptions,
+                                               responseParser: responseParser,
+                                               processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                               timeout: timeout,
+                                               userInfo: userInfo,
+                                               stackTrace: .init(filePath: filePath, function: function, line: line))
+    }
+    
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - responseType: The type of object to containd the captured response
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns the parsed CapturedResponse object
+    func waitAndCaptureResponse<CapturedResponse>(environment: [String: String]? = nil,
+                                                  currentDirectory: URL? = nil,
+                                                  standardInput: Any? = nil,
+                                                  outputOptions: CLIOutputOptions = .captureAll,
+                                                  withResponseType responseType: CapturedResponse.Type,
+                                                  processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                  timeout: DispatchTime = .distantFuture,
+                                                  userInfo: [String: Any] = [:],
+                                                  filePath: StaticString = #filePath,
+                                                  function: StaticString = #function,
+                                                  line: UInt = #line) throws -> CapturedResponse
+    where CapturedResponse: CLICapturedResponse {
+        
+        return try self.waitAndCaptureResponse(arguments: Array<String>(),
+                                               environment: environment,
+                                               currentDirectory: currentDirectory,
+                                               standardInput: standardInput,
+                                               outputOptions: outputOptions,
+                                               withResponseType: responseType,
+                                               processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                               timeout: timeout,
+                                               userInfo: userInfo,
+                                               stackTrace: .init(filePath: filePath, function: function, line: line))
+    }
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - dataType: The type of data object to containd the captured response
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns the parsed CLICapturedDataResponse object
+    func waitAndCaptureDataResponse<ResponseData>(environment: [String: String]? = nil,
+                                                  currentDirectory: URL? = nil,
+                                                  standardInput: Any? = nil,
+                                                  outputOptions: CLIOutputOptions = .captureAll,
+                                                  withDataType dataType: ResponseData.Type,
+                                                  processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                  timeout: DispatchTime = .distantFuture,
+                                                  userInfo: [String: Any] = [:],
+                                                  filePath: StaticString = #filePath,
+                                                  function: StaticString = #function,
+                                                  line: UInt = #line) throws -> CLICapturedDataResponse<ResponseData> {
+        
+        return try self.waitAndCaptureDataResponse(arguments: Array<String>(),
+                                                   environment: environment,
+                                                   currentDirectory: currentDirectory,
+                                                   standardInput: standardInput,
+                                                   outputOptions: outputOptions,
+                                                   withDataType: dataType,
+                                                   processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                                   timeout: timeout,
+                                                   userInfo: userInfo,
+                                                   stackTrace: .init(filePath: filePath, function: function, line: line))
+    }
+    
+    /// Execute core process and return the output as string objects
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the cli process outputs
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns the parsed CLICapturedStringResponse object
+    func waitAndCaptureStringResponse(environment: [String: String]? = nil,
+                                      currentDirectory: URL? = nil,
+                                      standardInput: Any? = nil,
+                                      outputOptions: CLIOutputOptions = .captureAll,
+                                      processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                      timeout: DispatchTime = .distantFuture,
+                                      userInfo: [String: Any] = [:],
+                                      filePath: StaticString = #filePath,
+                                      function: StaticString = #function,
+                                      line: UInt = #line) throws -> CLICapturedStringResponse {
+            
+        return try self.waitAndCaptureStringResponse(arguments: Array<String>(),
+                                                     environment: environment,
+                                                     currentDirectory: currentDirectory,
+                                                     standardInput: standardInput,
+                                                     outputOptions: outputOptions,
+                                                     processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                                     timeout: timeout,
+                                                     userInfo: userInfo,
+                                                     stackTrace: .init(filePath: filePath, function: function, line: line))
+    
+    }
+    
+}
+#else
+public extension CLICapture {
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - responseParser: Closure used to parse data into CapturedResponse object
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns the parsed CapturedResponse object
+    func waitAndCaptureResponse<CapturedData,
+                                CapturedResponse>(environment: [String: String]? = nil,
+                                                  currentDirectory: URL? = nil,
+                                                  standardInput: Any? = nil,
+                                                  outputOptions: CLIOutputOptions = .captureAll,
+                                                  responseParser: @escaping (_ exitStatusCode: Int32,
+                                                                           _ captureOptions: CLICaptureOptions,
+                                                                           _ capturedEvents: [CLICapturedOutputEvent<CapturedData>]) throws -> CapturedResponse,
+                                                  processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                  timeout: DispatchTime = .distantFuture,
+                                                  userInfo: [String: Any] = [:],
+                                                  filePath: StaticString = #file,
+                                                  function: StaticString = #function,
+                                                  line: UInt = #line) throws -> CapturedResponse {
+                  
+        return try self.waitAndCaptureResponse(arguments: Array<String>(),
+                                               environment: environment,
+                                               currentDirectory: currentDirectory,
+                                               standardInput: standardInput,
+                                               outputOptions: outputOptions,
+                                               responseParser: responseParser,
+                                               processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                               timeout: timeout,
+                                               userInfo: userInfo,
+                                               stackTrace: .init(filePath: filePath, function: function, line: line))
+    }
+    
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - responseType: The type of object to containd the captured response
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns the parsed CapturedResponse object
+    func waitAndCaptureResponse<CapturedResponse>(environment: [String: String]? = nil,
+                                                  currentDirectory: URL? = nil,
+                                                  standardInput: Any? = nil,
+                                                  outputOptions: CLIOutputOptions = .captureAll,
+                                                  withResponseType responseType: CapturedResponse.Type,
+                                                  processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                  timeout: DispatchTime = .distantFuture,
+                                                  userInfo: [String: Any] = [:],
+                                                  filePath: StaticString = #file,
+                                                  function: StaticString = #function,
+                                                  line: UInt = #line) throws -> CapturedResponse
+    where CapturedResponse: CLICapturedResponse {
+        
+        return try self.waitAndCaptureResponse(arguments: Array<String>(),
+                                               environment: environment,
+                                               currentDirectory: currentDirectory,
+                                               standardInput: standardInput,
+                                               outputOptions: outputOptions,
+                                               withResponseType: responseType,
+                                               processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                               timeout: timeout,
+                                               userInfo: userInfo,
+                                               stackTrace: .init(filePath: filePath, function: function, line: line))
+    }
+    
+    /// Execute core process and return the output as data events
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the core process outputs
+    ///   - dataType: The type of data object to containd the captured response
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns the parsed CLICapturedDataResponse object
+    func waitAndCaptureDataResponse<ResponseData>(environment: [String: String]? = nil,
+                                                  currentDirectory: URL? = nil,
+                                                  standardInput: Any? = nil,
+                                                  outputOptions: CLIOutputOptions = .captureAll,
+                                                  withDataType dataType: ResponseData.Type,
+                                                  processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                                  timeout: DispatchTime = .distantFuture,
+                                                  userInfo: [String: Any] = [:],
+                                                  filePath: StaticString = #file,
+                                                  function: StaticString = #function,
+                                                  line: UInt = #line) throws -> CLICapturedDataResponse<ResponseData> {
+        
+        return try self.waitAndCaptureDataResponse(arguments: Array<String>(),
+                                                   environment: environment,
+                                                   currentDirectory: currentDirectory,
+                                                   standardInput: standardInput,
+                                                   outputOptions: outputOptions,
+                                                   withDataType: dataType,
+                                                   processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                                   timeout: timeout,
+                                                   userInfo: userInfo,
+                                                   stackTrace: .init(filePath: filePath, function: function, line: line))
+    }
+    
+    /// Execute core process and return the output as string objects
+    /// - Parameters:
+    ///   - environment: The enviromental variables to set
+    ///   - currentDirectory: The current working directory to set
+    ///   - standardInput: The standard input to set the core process
+    ///   - outputOptions: The capture / passthrough options for the cli process outputs
+    ///   - processWroteToItsSTDOutput: Event handler used to capture indictor of data was written from process to its std outputs
+    ///   - timeout: Duration to wait for process to complete before killing process and failing out
+    ///   - userInfo: Any user info to pass to the create process
+    /// - Returns: Returns the parsed CLICapturedStringResponse object
+    func waitAndCaptureStringResponse(environment: [String: String]? = nil,
+                                      currentDirectory: URL? = nil,
+                                      standardInput: Any? = nil,
+                                      outputOptions: CLIOutputOptions = .captureAll,
+                                      processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
+                                      timeout: DispatchTime = .distantFuture,
+                                      userInfo: [String: Any] = [:],
+                                      filePath: StaticString = #file,
+                                      function: StaticString = #function,
+                                      line: UInt = #line) throws -> CLICapturedStringResponse {
+            
+        return try self.waitAndCaptureStringResponse(arguments: Array<String>(),
+                                                     environment: environment,
+                                                     currentDirectory: currentDirectory,
+                                                     standardInput: standardInput,
+                                                     outputOptions: outputOptions,
+                                                     processWroteToItsSTDOutput: processWroteToItsSTDOutput,
+                                                     timeout: timeout,
+                                                     userInfo: userInfo,
+                                                     stackTrace: .init(filePath: filePath, function: function, line: line))
+    
+    }
+    
+}
+#endif
 
 extension CLICapture {
     /// Print to the CLICapture output
@@ -1955,3 +5725,5 @@ extension CLICapture {
     
     
 }
+
+
