@@ -330,83 +330,47 @@ open class CLICapture {
         var outReadFinished: Bool = true
         var errReadFinished: Bool = true
         
-        if outputOptions.capture.contains(.out) || self.stdOutBuffer != nil {
-            outReadFinished = false
-            let outPipe = Pipe()
-            pipes.append(outPipe)
-            process.standardOutput = outPipe
-            DispatchIO.continiousRead(from: outPipe,
-                                      runningHandlerOn: eventQueue) { data, err in
-                if outputOptions.passthrough.contains(.out) {
-                    self.writeDataToOut(data)
-                }
-                if outputOptions.capture.contains(.out) {
-                    eventHandler(.out(data: (data as? DATA) ?? DATA(data),
-                                      error: err,
-                                      process: process))
-                }
-                
-                processWroteToItsSTDOutput?(process, .out)
-                
-                outReadFinished = (err != 0 || (err == 0 && data.count == 0))
-                //print("Finished Read STD Out: \(errReadFinished)")
+        outReadFinished = false
+        let outPipe = Pipe()
+        pipes.append(outPipe)
+        process.standardOutput = outPipe
+        DispatchIO.continiousRead(from: outPipe,
+                                  runningHandlerOn: eventQueue) { data, err in
+            if outputOptions.passthrough.contains(.out) {
+                self.writeDataToOut(data)
             }
-        } else if !outputOptions.passthrough.contains(.out) {
-            /*#if os(macOS) || swift(>=5.0)
-            process.standardOutput = FileHandle.nullDevice
-            #else
-            let p = Pipe()
-            pipes.append(p)
-            process.standardOutput = p
-            #endif*/
-            let outPipe = Pipe()
-            pipes.append(outPipe)
-            process.standardOutput = outPipe
-            DispatchIO.continiousRead(from: outPipe,
-                                      runningHandlerOn: eventQueue) { data, err in
-                processWroteToItsSTDOutput?(process, .out)
+            if outputOptions.capture.contains(.out) {
+                eventHandler(.out(data: (data as? DATA) ?? DATA(data),
+                                  error: err,
+                                  process: process))
             }
+            
+            processWroteToItsSTDOutput?(process, .out)
+            
+            outReadFinished = (err != 0 || (err == 0 && data.count == 0))
+            //print("Finished Read STD Out: \(errReadFinished)")
         }
         
         
-        if outputOptions.capture.contains(.err) || self.stdErrBuffer != nil {
-            errReadFinished = false
-            let errPipe = Pipe()
-            pipes.append(errPipe)
-            process.standardError = errPipe
-            DispatchIO.continiousRead(from: errPipe,
-                                      runningHandlerOn: eventQueue) { data, err in
-                if outputOptions.passthrough.contains(.err) {
-                    self.writeDataToErr(data)
-                }
-                
-                if outputOptions.capture.contains(.err) {
-                    eventHandler(.err(data: (data as? DATA) ?? DATA(data),
-                                      error: err,
-                                      process: process))
-                }
-                processWroteToItsSTDOutput?(process, .err)
-                errReadFinished = (err != 0 || (err == 0 && data.count == 0))
-                //print("Finished Read STD Err: \(errReadFinished)")
-            }
-        } else if !outputOptions.passthrough.contains(.err) {
-            /*#if os(macOS) || swift(>=5.0)
-            process.standardError = FileHandle.nullDevice
-            #else
-            let p = Pipe()
-            pipes.append(p)
-            process.standardError = p
-            #endif*/
-            let errPipe = Pipe()
-            pipes.append(errPipe)
-            process.standardError = errPipe
-            DispatchIO.continiousRead(from: errPipe,
-                                      runningHandlerOn: eventQueue) { data, err in
-                processWroteToItsSTDOutput?(process, .err)
+        errReadFinished = false
+        let errPipe = Pipe()
+        pipes.append(errPipe)
+        process.standardError = errPipe
+        DispatchIO.continiousRead(from: errPipe,
+                                  runningHandlerOn: eventQueue) { data, err in
+            if outputOptions.passthrough.contains(.err) {
+                self.writeDataToErr(data)
             }
             
+            if outputOptions.capture.contains(.err) {
+                eventHandler(.err(data: (data as? DATA) ?? DATA(data),
+                                  error: err,
+                                  process: process))
+            }
+            processWroteToItsSTDOutput?(process, .err)
+            errReadFinished = (err != 0 || (err == 0 && data.count == 0))
+            //print("Finished Read STD Err: \(errReadFinished)")
         }
-            
         
         process.terminationHandler = { process in
             // Waiting to make sure DispatchIO reads are finished
