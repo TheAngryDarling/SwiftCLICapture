@@ -8,6 +8,7 @@
 import Foundation
 import Dispatch
 import SynchronizeObjects
+import CodeStackTrace
 
 /// Object used to execute and/or capture output from a CLI process
 open class CLICapture {
@@ -136,7 +137,7 @@ open class CLICapture {
                                       _ currentDirectory: URL?,
                                       _ standardInput: Any?,
                                       _ userInfo: [String: Any],
-                                      _ stackTrace: CLIStackTrace) -> Process
+                                      _ stackTrace: CodeStackTrace) -> Process
     
     
     /// Event Handler for capturing events from a Process
@@ -232,7 +233,7 @@ open class CLICapture {
              _ currentDirectory: URL?,
              _ standardInput: Any?,
              _ userInfo: [String: Any],
-             _ stackTrace: CLIStackTrace) -> Process in
+             _ stackTrace: CodeStackTrace) -> Process in
             
             
             let rtn = Process()
@@ -301,7 +302,7 @@ open class CLICapture {
                                   standardInput: Any? = nil,
                                   outputOptions: CLIOutputOptions = .all,
                                   userInfo: [String: Any] = [:],
-                                  stackTrace: CLIStackTrace,
+                                  stackTrace: CodeStackTrace,
                                   runningEventHandlerOn: DispatchQueue? = nil,
                                   processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                   eventHandler: @escaping CapturedProcessEventHandler<DATA>) throws -> Process
@@ -414,7 +415,7 @@ open class CLICapture {
                             standardInput: Any? = nil,
                             passthrougOptions: CLIPassthroughOptions = .all,
                             userInfo: [String: Any] = [:],
-                            stackTrace: CLIStackTrace,
+                            stackTrace: CodeStackTrace,
                             runningCallbackHandlerOn: DispatchQueue? = nil,
                             processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                             callbackHandler: @escaping(_ sender: Process) -> Void) throws -> Process
@@ -462,7 +463,7 @@ open class CLICapture {
                                                 standardInput: Any? = nil,
                                                 outputOptions: CLIOutputOptions = .captureAll,
                                                 userInfo: [String: Any] = [:],
-                                                stackTrace: CLIStackTrace,
+                                                stackTrace: CodeStackTrace,
                                                 runningEventHandlerOn: DispatchQueue? = nil,
                                                 processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                                 eventHandler: @escaping CapturedOutputEventHandler<EventData>,
@@ -532,7 +533,7 @@ open class CLICapture {
                                                 standardInput: Any? = nil,
                                                 outputOptions: CLIOutputOptions = .captureAll,
                                                 userInfo: [String: Any] = [:],
-                                                stackTrace: CLIStackTrace,
+                                                stackTrace: CodeStackTrace,
                                                 runningEventHandlerOn: DispatchQueue? = nil,
                                                 processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                                 eventHandler: @escaping CapturedOutputEventHandler<EventData>,
@@ -589,7 +590,7 @@ open class CLICapture {
                                                 standardInput: Any? = nil,
                                                 outputOptions: CLIOutputOptions = .captureAll,
                                                 userInfo: [String: Any] = [:],
-                                                stackTrace: CLIStackTrace,
+                                                stackTrace: CodeStackTrace,
                                                 runningEventHandlerOn: DispatchQueue? = nil,
                                                 processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                                 eventHandler: @escaping CapturedOutputEventHandler<EventData>,
@@ -633,7 +634,7 @@ open class CLICapture {
                                                standardInput: Any? = nil,
                                                outputOptions: CLIOutputOptions = .captureAll,
                                                userInfo: [String: Any] = [:],
-                                               stackTrace: CLIStackTrace,
+                                               stackTrace: CodeStackTrace,
                                                runningEventHandlerOn: DispatchQueue? = nil,
                                                processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                                eventHandler: @escaping CapturedOutputEventHandler<EventData>,
@@ -692,7 +693,9 @@ public extension CLICapture {
                                 standardInput: standardInput,
                                 outputOptions: outputOptions,
                                 userInfo: userInfo,
-                                stackTrace: .init(filePath: filePath, function: function, line: line),
+                                stackTrace: .init(filePath: filePath,
+                                                  function: function,
+                                                  line: line),
                                 runningEventHandlerOn: runningEventHandlerOn,
                                 processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                 eventHandler: eventHandler)
@@ -729,7 +732,9 @@ public extension CLICapture {
                                     standardInput: standardInput,
                                     passthrougOptions: passthrougOptions,
                                     userInfo: userInfo,
-                                    stackTrace: .init(filePath: filePath, function: function, line: line),
+                                    stackTrace: .init(filePath: filePath,
+                                                      function: function,
+                                                      line: line),
                                     runningCallbackHandlerOn: runningCallbackHandlerOn,
                                     processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                     callbackHandler: callbackHandler)
@@ -778,7 +783,9 @@ public extension CLICapture {
                                               standardInput: standardInput,
                                               outputOptions: outputOptions,
                                               userInfo: userInfo,
-                                              stackTrace: .init(filePath: filePath, function: function, line: line),
+                                              stackTrace: .init(filePath: filePath,
+                                                                function: function,
+                                                                line: line),
                                               runningEventHandlerOn: runningEventHandlerOn,
                                               processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                               eventHandler: eventHandler,
@@ -828,7 +835,9 @@ public extension CLICapture {
                                           standardInput: standardInput,
                                           outputOptions: outputOptions,
                                           userInfo: userInfo,
-                                          stackTrace: .init(filePath: filePath, function: function, line: line),
+                                          stackTrace: .init(filePath: filePath,
+                                                            function: function,
+                                                            line: line),
                                           runningEventHandlerOn: runningEventHandlerOn,
                                           processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                           eventHandler: eventHandler,
@@ -875,7 +884,9 @@ public extension CLICapture {
                                             standardInput: standardInput,
                                             outputOptions: outputOptions,
                                             userInfo: userInfo,
-                                            stackTrace: .init(filePath: filePath, function: function, line: line),
+                                            stackTrace: .init(filePath: filePath,
+                                                              function: function,
+                                                              line: line),
                                             runningEventHandlerOn: runningEventHandlerOn,
                                             processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                             eventHandler: eventHandler,
@@ -920,7 +931,9 @@ public extension CLICapture {
                                                   standardInput: standardInput,
                                                   outputOptions: outputOptions,
                                                   userInfo: userInfo,
-                                                  stackTrace: .init(filePath: filePath, function: function, line: line),
+                                                  stackTrace: .init(filePath: filePath,
+                                                                    function: function,
+                                                                    line: line),
                                                   runningEventHandlerOn: runningEventHandlerOn,
                                                   processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                                   eventHandler: eventHandler,
@@ -961,7 +974,9 @@ public extension CLICapture {
                                 standardInput: standardInput,
                                 outputOptions: outputOptions,
                                 userInfo: userInfo,
-                                stackTrace: .init(filePath: filePath, function: function, line: line),
+                                stackTrace: .init(filePath: filePath,
+                                                  function: function,
+                                                  line: line),
                                 runningEventHandlerOn: runningEventHandlerOn,
                                 processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                 eventHandler: eventHandler)
@@ -998,7 +1013,9 @@ public extension CLICapture {
                                     standardInput: standardInput,
                                     passthrougOptions: passthrougOptions,
                                     userInfo: userInfo,
-                                    stackTrace: .init(filePath: filePath, function: function, line: line),
+                                    stackTrace: .init(filePath: filePath,
+                                                      function: function,
+                                                      line: line),
                                     runningCallbackHandlerOn: runningCallbackHandlerOn,
                                     processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                     callbackHandler: callbackHandler)
@@ -1047,7 +1064,9 @@ public extension CLICapture {
                                               standardInput: standardInput,
                                               outputOptions: outputOptions,
                                               userInfo: userInfo,
-                                              stackTrace: .init(filePath: filePath, function: function, line: line),
+                                              stackTrace: .init(filePath: filePath,
+                                                                function: function,
+                                                                line: line),
                                               runningEventHandlerOn: runningEventHandlerOn,
                                               processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                               eventHandler: eventHandler,
@@ -1097,7 +1116,9 @@ public extension CLICapture {
                                           standardInput: standardInput,
                                           outputOptions: outputOptions,
                                           userInfo: userInfo,
-                                          stackTrace: .init(filePath: filePath, function: function, line: line),
+                                          stackTrace: .init(filePath: filePath,
+                                                            function: function,
+                                                            line: line),
                                           runningEventHandlerOn: runningEventHandlerOn,
                                           processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                           eventHandler: eventHandler,
@@ -1144,7 +1165,9 @@ public extension CLICapture {
                                             standardInput: standardInput,
                                             outputOptions: outputOptions,
                                             userInfo: userInfo,
-                                            stackTrace: .init(filePath: filePath, function: function, line: line),
+                                            stackTrace: .init(filePath: filePath,
+                                                              function: function,
+                                                              line: line),
                                             runningEventHandlerOn: runningEventHandlerOn,
                                             processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                             eventHandler: eventHandler,
@@ -1189,7 +1212,9 @@ public extension CLICapture {
                                                   standardInput: standardInput,
                                                   outputOptions: outputOptions,
                                                   userInfo: userInfo,
-                                                  stackTrace: .init(filePath: filePath, function: function, line: line),
+                                                  stackTrace: .init(filePath: filePath,
+                                                                    function: function,
+                                                                    line: line),
                                                   runningEventHandlerOn: runningEventHandlerOn,
                                                   processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                                   eventHandler: eventHandler,
@@ -1223,7 +1248,7 @@ public extension CLICapture {
                                            standardInput: Any? = nil,
                                            outputOptions: CLIOutputOptions = .captureAll,
                                            userInfo: [String: Any] = [:],
-                                           stackTrace: CLIStackTrace,
+                                           stackTrace: CodeStackTrace,
                                            runningCallbackHandlerOn: DispatchQueue? = nil,
                                            processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                            responseParser: @escaping (_ exitStatusCode: Int32,
@@ -1274,7 +1299,7 @@ public extension CLICapture {
                                            standardInput: Any? = nil,
                                            outputOptions: CLIOutputOptions = .captureAll,
                                            userInfo: [String: Any] = [:],
-                                           stackTrace: CLIStackTrace,
+                                           stackTrace: CodeStackTrace,
                                            runningCallbackHandlerOn: DispatchQueue? = nil,
                                            processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                            withResponseType responseType: CapturedResponse.Type,
@@ -1322,7 +1347,7 @@ public extension CLICapture {
                                            standardInput: Any? = nil,
                                            outputOptions: CLIOutputOptions = .captureAll,
                                            userInfo: [String: Any] = [:],
-                                           stackTrace: CLIStackTrace,
+                                           stackTrace: CodeStackTrace,
                                            runningCallbackHandlerOn: DispatchQueue? = nil,
                                            processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                            withDataType dataType: ResponseData.Type,
@@ -1365,7 +1390,7 @@ public extension CLICapture {
                                      standardInput: Any? = nil,
                                      outputOptions: CLIOutputOptions = .captureAll,
                                      userInfo: [String: Any] = [:],
-                                     stackTrace: CLIStackTrace,
+                                     stackTrace: CodeStackTrace,
                                      runningCallbackHandlerOn: DispatchQueue? = nil,
                                      processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                      callbackHandler: @escaping (_ sender: Process,
@@ -1433,7 +1458,9 @@ public extension CLICapture {
                                               standardInput: standardInput,
                                               outputOptions: outputOptions,
                                               userInfo: userInfo,
-                                              stackTrace: .init(filePath: filePath, function: function, line: line),
+                                              stackTrace: .init(filePath: filePath,
+                                                                function: function,
+                                                                line: line),
                                               runningCallbackHandlerOn: runningCallbackHandlerOn,
                                               processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                               responseParser: responseParser,
@@ -1481,7 +1508,9 @@ public extension CLICapture {
                                           standardInput: standardInput,
                                           outputOptions: outputOptions,
                                           userInfo: userInfo,
-                                          stackTrace: .init(filePath: filePath, function: function, line: line),
+                                          stackTrace: .init(filePath: filePath,
+                                                            function: function,
+                                                            line: line),
                                           runningCallbackHandlerOn: runningCallbackHandlerOn,
                                           processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                           withResponseType: responseType,
@@ -1524,7 +1553,9 @@ public extension CLICapture {
                                             standardInput: standardInput,
                                             outputOptions: outputOptions,
                                             userInfo: userInfo,
-                                            stackTrace: .init(filePath: filePath, function: function, line: line),
+                                            stackTrace: .init(filePath: filePath,
+                                                              function: function,
+                                                              line: line),
                                             runningCallbackHandlerOn: runningCallbackHandlerOn,
                                             processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                             withDataType: dataType,
@@ -1565,7 +1596,9 @@ public extension CLICapture {
                                               standardInput: standardInput,
                                               outputOptions: outputOptions,
                                               userInfo: userInfo,
-                                              stackTrace: .init(filePath: filePath, function: function, line: line),
+                                              stackTrace: .init(filePath: filePath,
+                                                                function: function,
+                                                                line: line),
                                               runningCallbackHandlerOn: runningCallbackHandlerOn,
                                               processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                               callbackHandler: callbackHandler)
@@ -1615,7 +1648,9 @@ public extension CLICapture {
                                               standardInput: standardInput,
                                               outputOptions: outputOptions,
                                               userInfo: userInfo,
-                                              stackTrace: .init(filePath: filePath, function: function, line: line),
+                                              stackTrace: .init(filePath: filePath,
+                                                                function: function,
+                                                                line: line),
                                               runningCallbackHandlerOn: runningCallbackHandlerOn,
                                               processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                               responseParser: responseParser,
@@ -1663,7 +1698,9 @@ public extension CLICapture {
                                           standardInput: standardInput,
                                           outputOptions: outputOptions,
                                           userInfo: userInfo,
-                                          stackTrace: .init(filePath: filePath, function: function, line: line),
+                                          stackTrace: .init(filePath: filePath,
+                                                            function: function,
+                                                            line: line),
                                           runningCallbackHandlerOn: runningCallbackHandlerOn,
                                           processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                           withResponseType: responseType,
@@ -1706,7 +1743,9 @@ public extension CLICapture {
                                             standardInput: standardInput,
                                             outputOptions: outputOptions,
                                             userInfo: userInfo,
-                                            stackTrace: .init(filePath: filePath, function: function, line: line),
+                                            stackTrace: .init(filePath: filePath,
+                                                              function: function,
+                                                              line: line),
                                             runningCallbackHandlerOn: runningCallbackHandlerOn,
                                             processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                             withDataType: dataType,
@@ -1747,7 +1786,9 @@ public extension CLICapture {
                                               standardInput: standardInput,
                                               outputOptions: outputOptions,
                                               userInfo: userInfo,
-                                              stackTrace: .init(filePath: filePath, function: function, line: line),
+                                              stackTrace: .init(filePath: filePath,
+                                                                function: function,
+                                                                line: line),
                                               runningCallbackHandlerOn: runningCallbackHandlerOn,
                                               processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                               callbackHandler: callbackHandler)
@@ -1776,7 +1817,7 @@ public extension CLICapture {
                        standardInput: Any? = nil,
                        outputOptions: CLIOutputOptions = .all,
                        userInfo: [String: Any] = [:],
-                       stackTrace: CLIStackTrace,
+                       stackTrace: CodeStackTrace,
                        runningEventHandlerOn: DispatchQueue? = nil,
                        processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                        eventHandler: @escaping CapturedProcessEventHandler<DATA>) throws -> Process {
@@ -1809,7 +1850,7 @@ public extension CLICapture {
                  standardInput: Any? = nil,
                  passthrougOptions: CLIPassthroughOptions = .all,
                  userInfo: [String: Any] = [:],
-                 stackTrace: CLIStackTrace,
+                 stackTrace: CodeStackTrace,
                  runningCallbackHandlerOn: DispatchQueue? = nil,
                  processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                  callbackHandler: @escaping(_ sender: Process) -> Void) throws -> Process {
@@ -1846,7 +1887,7 @@ public extension CLICapture {
                                            standardInput: Any? = nil,
                                            outputOptions: CLIOutputOptions = .captureAll,
                                            userInfo: [String: Any] = [:],
-                                           stackTrace: CLIStackTrace,
+                                           stackTrace: CodeStackTrace,
                                            runningEventHandlerOn: DispatchQueue? = nil,
                                            processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                            eventHandler: @escaping CapturedOutputEventHandler<EventData>,
@@ -1893,7 +1934,7 @@ public extension CLICapture {
                                            standardInput: Any? = nil,
                                            outputOptions: CLIOutputOptions = .captureAll,
                                            userInfo: [String: Any] = [:],
-                                           stackTrace: CLIStackTrace,
+                                           stackTrace: CodeStackTrace,
                                            runningEventHandlerOn: DispatchQueue? = nil,
                                            processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                            eventHandler: @escaping CapturedOutputEventHandler<EventData>,
@@ -1937,7 +1978,7 @@ public extension CLICapture {
                                            standardInput: Any? = nil,
                                            outputOptions: CLIOutputOptions = .captureAll,
                                            userInfo: [String: Any] = [:],
-                                           stackTrace: CLIStackTrace,
+                                           stackTrace: CodeStackTrace,
                                            runningEventHandlerOn: DispatchQueue? = nil,
                                            processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                            eventHandler: @escaping CapturedOutputEventHandler<EventData>,
@@ -1977,7 +2018,7 @@ public extension CLICapture {
                                           standardInput: Any? = nil,
                                           outputOptions: CLIOutputOptions = .captureAll,
                                           userInfo: [String: Any] = [:],
-                                          stackTrace: CLIStackTrace,
+                                          stackTrace: CodeStackTrace,
                                           runningEventHandlerOn: DispatchQueue? = nil,
                                           processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                           eventHandler: @escaping CapturedOutputEventHandler<EventData>,
@@ -2031,7 +2072,9 @@ public extension CLICapture {
                                 standardInput: standardInput,
                                 outputOptions: outputOptions,
                                 userInfo: userInfo,
-                                stackTrace: .init(filePath: filePath, function: function, line: line),
+                                stackTrace: .init(filePath: filePath,
+                                                  function: function,
+                                                  line: line),
                                 runningEventHandlerOn: runningEventHandlerOn,
                                 processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                 eventHandler: eventHandler)
@@ -2064,7 +2107,9 @@ public extension CLICapture {
                                 standardInput: standardInput,
                                 passthrougOptions: passthrougOptions,
                                 userInfo: userInfo,
-                                stackTrace: .init(filePath: filePath, function: function, line: line),
+                                stackTrace: .init(filePath: filePath,
+                                                  function: function,
+                                                  line: line),
                                 runningCallbackHandlerOn: runningCallbackHandlerOn,
                                 processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                 callbackHandler: callbackHandler)
@@ -2108,7 +2153,9 @@ public extension CLICapture {
                                         standardInput: standardInput,
                                         outputOptions: outputOptions,
                                         userInfo: userInfo,
-                                        stackTrace: .init(filePath: filePath, function: function, line: line),
+                                        stackTrace: .init(filePath: filePath,
+                                                          function: function,
+                                                          line: line),
                                         runningEventHandlerOn: runningEventHandlerOn,
                                         processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                         eventHandler: eventHandler,
@@ -2154,7 +2201,9 @@ public extension CLICapture {
                                             standardInput: standardInput,
                                             outputOptions: outputOptions,
                                             userInfo: userInfo,
-                                            stackTrace: .init(filePath: filePath, function: function, line: line),
+                                            stackTrace: .init(filePath: filePath,
+                                                              function: function,
+                                                              line: line),
                                             runningEventHandlerOn: runningEventHandlerOn,
                                             processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                             eventHandler: eventHandler,
@@ -2196,7 +2245,9 @@ public extension CLICapture {
                                         standardInput: standardInput,
                                         outputOptions: outputOptions,
                                         userInfo: userInfo,
-                                        stackTrace: .init(filePath: filePath, function: function, line: line),
+                                        stackTrace: .init(filePath: filePath,
+                                                          function: function,
+                                                          line: line),
                                         runningEventHandlerOn: runningEventHandlerOn,
                                             processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                         eventHandler: eventHandler,
@@ -2236,7 +2287,9 @@ public extension CLICapture {
                                               standardInput: standardInput,
                                               outputOptions: outputOptions,
                                               userInfo: userInfo,
-                                              stackTrace: .init(filePath: filePath, function: function, line: line),
+                                              stackTrace: .init(filePath: filePath,
+                                                                function: function,
+                                                                line: line),
                                               runningEventHandlerOn: runningEventHandlerOn,
                                               processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                               eventHandler: eventHandler,
@@ -2275,7 +2328,9 @@ public extension CLICapture {
                                 standardInput: standardInput,
                                 outputOptions: outputOptions,
                                 userInfo: userInfo,
-                                stackTrace: .init(filePath: filePath, function: function, line: line),
+                                stackTrace: .init(filePath: filePath,
+                                                  function: function,
+                                                  line: line),
                                 runningEventHandlerOn: runningEventHandlerOn,
                                 processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                 eventHandler: eventHandler)
@@ -2308,7 +2363,9 @@ public extension CLICapture {
                                 standardInput: standardInput,
                                 passthrougOptions: passthrougOptions,
                                 userInfo: userInfo,
-                                stackTrace: .init(filePath: filePath, function: function, line: line),
+                                stackTrace: .init(filePath: filePath,
+                                                  function: function,
+                                                  line: line),
                                 runningCallbackHandlerOn: runningCallbackHandlerOn,
                                 processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                 callbackHandler: callbackHandler)
@@ -2352,7 +2409,9 @@ public extension CLICapture {
                                         standardInput: standardInput,
                                         outputOptions: outputOptions,
                                         userInfo: userInfo,
-                                        stackTrace: .init(filePath: filePath, function: function, line: line),
+                                        stackTrace: .init(filePath: filePath,
+                                                          function: function,
+                                                          line: line),
                                         runningEventHandlerOn: runningEventHandlerOn,
                                         processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                         eventHandler: eventHandler,
@@ -2398,7 +2457,9 @@ public extension CLICapture {
                                             standardInput: standardInput,
                                             outputOptions: outputOptions,
                                             userInfo: userInfo,
-                                            stackTrace: .init(filePath: filePath, function: function, line: line),
+                                            stackTrace: .init(filePath: filePath,
+                                                              function: function,
+                                                              line: line),
                                             runningEventHandlerOn: runningEventHandlerOn,
                                             processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                             eventHandler: eventHandler,
@@ -2440,7 +2501,9 @@ public extension CLICapture {
                                         standardInput: standardInput,
                                         outputOptions: outputOptions,
                                         userInfo: userInfo,
-                                        stackTrace: .init(filePath: filePath, function: function, line: line),
+                                        stackTrace: .init(filePath: filePath,
+                                                          function: function,
+                                                          line: line),
                                         runningEventHandlerOn: runningEventHandlerOn,
                                             processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                         eventHandler: eventHandler,
@@ -2480,7 +2543,9 @@ public extension CLICapture {
                                               standardInput: standardInput,
                                               outputOptions: outputOptions,
                                               userInfo: userInfo,
-                                              stackTrace: .init(filePath: filePath, function: function, line: line),
+                                              stackTrace: .init(filePath: filePath,
+                                                                function: function,
+                                                                line: line),
                                               runningEventHandlerOn: runningEventHandlerOn,
                                               processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                               eventHandler: eventHandler,
@@ -2513,7 +2578,7 @@ public extension CLICapture {
                                            standardInput: Any? = nil,
                                            outputOptions: CLIOutputOptions = .captureAll,
                                            userInfo: [String: Any] = [:],
-                                           stackTrace: CLIStackTrace,
+                                           stackTrace: CodeStackTrace,
                                            runningCallbackHandlerOn: DispatchQueue? = nil,
                                            processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                            responseParser: @escaping (_ exitStatusCode: Int32,
@@ -2559,7 +2624,7 @@ public extension CLICapture {
                                            standardInput: Any? = nil,
                                            outputOptions: CLIOutputOptions = .captureAll,
                                            userInfo: [String: Any] = [:],
-                                           stackTrace: CLIStackTrace,
+                                           stackTrace: CodeStackTrace,
                                            runningCallbackHandlerOn: DispatchQueue? = nil,
                                            processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                            withResponseType responseType: CapturedResponse.Type,
@@ -2602,7 +2667,7 @@ public extension CLICapture {
                                            standardInput: Any? = nil,
                                            outputOptions: CLIOutputOptions = .captureAll,
                                            userInfo: [String: Any] = [:],
-                                           stackTrace: CLIStackTrace,
+                                           stackTrace: CodeStackTrace,
                                            runningCallbackHandlerOn: DispatchQueue? = nil,
                                            processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                            withDataType dataType: ResponseData.Type,
@@ -2643,7 +2708,7 @@ public extension CLICapture {
                                standardInput: Any? = nil,
                                outputOptions: CLIOutputOptions = .captureAll,
                                userInfo: [String: Any] = [:],
-                               stackTrace: CLIStackTrace,
+                               stackTrace: CodeStackTrace,
                                runningCallbackHandlerOn: DispatchQueue? = nil,
                                processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                callbackHandler: @escaping (_ sender: Process,
@@ -2706,7 +2771,9 @@ public extension CLICapture {
                                         standardInput: standardInput,
                                         outputOptions: outputOptions,
                                         userInfo: userInfo,
-                                        stackTrace: .init(filePath: filePath, function: function, line: line),
+                                        stackTrace: .init(filePath: filePath,
+                                                          function: function,
+                                                          line: line),
                                         runningCallbackHandlerOn: runningCallbackHandlerOn,
                                         processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                         responseParser: responseParser,
@@ -2748,7 +2815,9 @@ public extension CLICapture {
                                         standardInput: standardInput,
                                         outputOptions: outputOptions,
                                         userInfo: userInfo,
-                                        stackTrace: .init(filePath: filePath, function: function, line: line),
+                                        stackTrace: .init(filePath: filePath,
+                                                          function: function,
+                                                          line: line),
                                         runningCallbackHandlerOn: runningCallbackHandlerOn,
                                         processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                         withResponseType: responseType,
@@ -2788,7 +2857,9 @@ public extension CLICapture {
                                             standardInput: standardInput,
                                             outputOptions: outputOptions,
                                             userInfo: userInfo,
-                                            stackTrace: .init(filePath: filePath, function: function, line: line),
+                                            stackTrace: .init(filePath: filePath,
+                                                              function: function,
+                                                              line: line),
                                             runningCallbackHandlerOn: runningCallbackHandlerOn,
                                             processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                             withDataType: dataType,
@@ -2825,7 +2896,9 @@ public extension CLICapture {
                                             standardInput: standardInput,
                                             outputOptions: outputOptions,
                                             userInfo: userInfo,
-                                            stackTrace: .init(filePath: filePath, function: function, line: line),
+                                            stackTrace: .init(filePath: filePath,
+                                                              function: function,
+                                                              line: line),
                                             runningCallbackHandlerOn: runningCallbackHandlerOn,
                                               processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                             callbackHandler: callbackHandler)
@@ -2871,7 +2944,9 @@ public extension CLICapture {
                                         standardInput: standardInput,
                                         outputOptions: outputOptions,
                                         userInfo: userInfo,
-                                        stackTrace: .init(filePath: filePath, function: function, line: line),
+                                        stackTrace: .init(filePath: filePath,
+                                                          function: function,
+                                                          line: line),
                                         runningCallbackHandlerOn: runningCallbackHandlerOn,
                                         processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                         responseParser: responseParser,
@@ -2913,7 +2988,9 @@ public extension CLICapture {
                                         standardInput: standardInput,
                                         outputOptions: outputOptions,
                                         userInfo: userInfo,
-                                        stackTrace: .init(filePath: filePath, function: function, line: line),
+                                        stackTrace: .init(filePath: filePath,
+                                                          function: function,
+                                                          line: line),
                                         runningCallbackHandlerOn: runningCallbackHandlerOn,
                                         processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                         withResponseType: responseType,
@@ -2953,7 +3030,9 @@ public extension CLICapture {
                                             standardInput: standardInput,
                                             outputOptions: outputOptions,
                                             userInfo: userInfo,
-                                            stackTrace: .init(filePath: filePath, function: function, line: line),
+                                            stackTrace: .init(filePath: filePath,
+                                                              function: function,
+                                                              line: line),
                                             runningCallbackHandlerOn: runningCallbackHandlerOn,
                                             processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                             withDataType: dataType,
@@ -2990,7 +3069,9 @@ public extension CLICapture {
                                             standardInput: standardInput,
                                             outputOptions: outputOptions,
                                             userInfo: userInfo,
-                                            stackTrace: .init(filePath: filePath, function: function, line: line),
+                                            stackTrace: .init(filePath: filePath,
+                                                              function: function,
+                                                              line: line),
                                             runningCallbackHandlerOn: runningCallbackHandlerOn,
                                               processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                             callbackHandler: callbackHandler)
@@ -3027,7 +3108,7 @@ public extension CLICapture {
                                     eventHandler: @escaping CapturedOutputEventHandler<DATA>,
                                     timeout: DispatchTime = .distantFuture,
                                     userInfo: [String: Any] = [:],
-                                    stackTrace: CLIStackTrace) throws -> Int32
+                                    stackTrace: CodeStackTrace) throws -> Int32
     where ARGS: Sequence, ARGS.Element == String {
        
         let semaphore = DispatchSemaphore(value: 0)
@@ -3083,7 +3164,7 @@ public extension CLICapture {
                               processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                               timeout: DispatchTime = .distantFuture,
                               userInfo: [String: Any] = [:],
-                              stackTrace: CLIStackTrace) throws -> Int32
+                              stackTrace: CodeStackTrace) throws -> Int32
     where ARGS: Sequence, ARGS.Element == String {
         
         let semaphore = DispatchSemaphore(value: 0)
@@ -3137,7 +3218,7 @@ public extension CLICapture {
                                                                            _ capturedEvents: [CLICapturedOutputEvent<CapturedData>]) throws -> CapturedResponse,
                                                 timeout: DispatchTime = .distantFuture,
                                                 userInfo: [String: Any] = [:],
-                                                stackTrace: CLIStackTrace) throws -> CapturedResponse
+                                                stackTrace: CodeStackTrace) throws -> CapturedResponse
     where ARGS: Sequence,
           ARGS.Element == String {
                   
@@ -3203,7 +3284,7 @@ public extension CLICapture {
                                                 withResponseType responseType: CapturedResponse.Type,
                                                 timeout: DispatchTime = .distantFuture,
                                                 userInfo: [String: Any] = [:],
-                                                stackTrace: CLIStackTrace) throws -> CapturedResponse
+                                                stackTrace: CodeStackTrace) throws -> CapturedResponse
         where ARGS: Sequence,
               ARGS.Element == String,
               CapturedResponse: CLICapturedResponse {
@@ -3268,7 +3349,7 @@ public extension CLICapture {
                                                 withDataType dataType: ResponseData.Type,
                                                 timeout: DispatchTime = .distantFuture,
                                                 userInfo: [String: Any] = [:],
-                                                stackTrace: CLIStackTrace) throws -> CLICapturedDataResponse<ResponseData>
+                                                stackTrace: CodeStackTrace) throws -> CLICapturedDataResponse<ResponseData>
     where ARGS: Sequence, ARGS.Element == String {
         let semaphore = DispatchSemaphore(value: 0)
         var rtn: CLICapturedDataResponse<ResponseData>? = nil
@@ -3330,7 +3411,7 @@ public extension CLICapture {
                                                eventHandler: @escaping CapturedOutputEventHandler<EventData>,
                                                timeout: DispatchTime = .distantFuture,
                                                userInfo: [String: Any] = [:],
-                                               stackTrace: CLIStackTrace) throws -> CLICapturedStringResponse
+                                               stackTrace: CodeStackTrace) throws -> CLICapturedStringResponse
         where ARGS: Sequence, ARGS.Element == String {
             
             let semaphore = DispatchSemaphore(value: 0)
@@ -3411,7 +3492,9 @@ public extension CLICapture {
                                        eventHandler: eventHandler,
                                        timeout: timeout,
                                        userInfo: userInfo,
-                                       stackTrace: .init(filePath: filePath, function: function, line: line))
+                                       stackTrace: .init(filePath: filePath,
+                                                         function: function,
+                                                         line: line))
         
     }
     
@@ -3447,7 +3530,9 @@ public extension CLICapture {
                                        processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                        timeout: timeout,
                                        userInfo: userInfo,
-                                       stackTrace: .init(filePath: filePath, function: function, line: line))
+                                       stackTrace: .init(filePath: filePath,
+                                                         function: function,
+                                                         line: line))
         
     }
     
@@ -3498,7 +3583,9 @@ public extension CLICapture {
                                              responseParser: responseParser,
                                              timeout: timeout,
                                              userInfo: userInfo,
-                                             stackTrace: .init(filePath: filePath, function: function, line: line))
+                                             stackTrace: .init(filePath: filePath,
+                                                               function: function,
+                                                               line: line))
               
     }
     
@@ -3548,7 +3635,9 @@ public extension CLICapture {
                                                  withResponseType: responseType,
                                                  timeout: timeout,
                                                  userInfo: userInfo,
-                                                 stackTrace: .init(filePath: filePath, function: function, line: line))
+                                                 stackTrace: .init(filePath: filePath,
+                                                                   function: function,
+                                                                   line: line))
     }
     
     /// Execute core process and return the output as data events
@@ -3593,7 +3682,9 @@ public extension CLICapture {
                                                    withDataType: dataType,
                                                    timeout: timeout,
                                                    userInfo: userInfo,
-                                                   stackTrace: .init(filePath: filePath, function: function, line: line))
+                                                   stackTrace: .init(filePath: filePath,
+                                                                     function: function,
+                                                                     line: line))
     }
     
     /// Execute core process and return the output as string objects
@@ -3635,7 +3726,9 @@ public extension CLICapture {
                                                          eventHandler: eventHandler,
                                                          timeout: timeout,
                                                          userInfo: userInfo,
-                                                         stackTrace: .init(filePath: filePath, function: function, line: line))
+                                                         stackTrace: .init(filePath: filePath,
+                                                                           function: function,
+                                                                           line: line))
     
     }
     
@@ -3681,7 +3774,9 @@ public extension CLICapture {
                                        eventHandler: eventHandler,
                                        timeout: timeout,
                                        userInfo: userInfo,
-                                       stackTrace: .init(filePath: filePath, function: function, line: line))
+                                       stackTrace: .init(filePath: filePath,
+                                                         function: function,
+                                                         line: line))
         
     }
     
@@ -3717,7 +3812,9 @@ public extension CLICapture {
                                        processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                        timeout: timeout,
                                        userInfo: userInfo,
-                                       stackTrace: .init(filePath: filePath, function: function, line: line))
+                                       stackTrace: .init(filePath: filePath,
+                                                         function: function,
+                                                         line: line))
         
     }
     
@@ -3768,7 +3865,9 @@ public extension CLICapture {
                                              responseParser: responseParser,
                                              timeout: timeout,
                                              userInfo: userInfo,
-                                             stackTrace: .init(filePath: filePath, function: function, line: line))
+                                             stackTrace: .init(filePath: filePath,
+                                                               function: function,
+                                                               line: line))
               
     }
     
@@ -3818,7 +3917,9 @@ public extension CLICapture {
                                                  withResponseType: responseType,
                                                  timeout: timeout,
                                                  userInfo: userInfo,
-                                                 stackTrace: .init(filePath: filePath, function: function, line: line))
+                                                 stackTrace: .init(filePath: filePath,
+                                                                   function: function,
+                                                                   line: line))
     }
     
     /// Execute core process and return the output as data events
@@ -3863,7 +3964,9 @@ public extension CLICapture {
                                                    withDataType: dataType,
                                                    timeout: timeout,
                                                    userInfo: userInfo,
-                                                   stackTrace: .init(filePath: filePath, function: function, line: line))
+                                                   stackTrace: .init(filePath: filePath,
+                                                                     function: function,
+                                                                     line: line))
     }
     
     /// Execute core process and return the output as string objects
@@ -3905,7 +4008,9 @@ public extension CLICapture {
                                                          eventHandler: eventHandler,
                                                          timeout: timeout,
                                                          userInfo: userInfo,
-                                                         stackTrace: .init(filePath: filePath, function: function, line: line))
+                                                         stackTrace: .init(filePath: filePath,
+                                                                           function: function,
+                                                                           line: line))
     
     }
     
@@ -3941,7 +4046,7 @@ public extension CLICapture {
                                                 processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                                 timeout: DispatchTime = .distantFuture,
                                                 userInfo: [String: Any] = [:],
-                                                stackTrace: CLIStackTrace) throws -> CapturedResponse
+                                                stackTrace: CodeStackTrace) throws -> CapturedResponse
     where ARGS: Sequence,
           ARGS.Element == String {
                   
@@ -4000,7 +4105,7 @@ public extension CLICapture {
                                                   processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                                   timeout: DispatchTime = .distantFuture,
                                                   userInfo: [String: Any] = [:],
-                                                  stackTrace: CLIStackTrace) throws -> CapturedResponse
+                                                  stackTrace: CodeStackTrace) throws -> CapturedResponse
         where ARGS: Sequence,
               ARGS.Element == String,
               CapturedResponse: CLICapturedResponse {
@@ -4058,7 +4163,7 @@ public extension CLICapture {
                                                   processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                                   timeout: DispatchTime = .distantFuture,
                                                   userInfo: [String: Any] = [:],
-                                                  stackTrace: CLIStackTrace) throws -> CLICapturedDataResponse<ResponseData>
+                                                  stackTrace: CodeStackTrace) throws -> CLICapturedDataResponse<ResponseData>
     where ARGS: Sequence, ARGS.Element == String {
         let semaphore = DispatchSemaphore(value: 0)
         var rtn: CLICapturedDataResponse<ResponseData>? = nil
@@ -4113,7 +4218,7 @@ public extension CLICapture {
                                             processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                             timeout: DispatchTime = .distantFuture,
                                             userInfo: [String: Any] = [:],
-                                            stackTrace: CLIStackTrace) throws -> CLICapturedStringResponse
+                                            stackTrace: CodeStackTrace) throws -> CLICapturedStringResponse
         where ARGS: Sequence, ARGS.Element == String {
             
             let semaphore = DispatchSemaphore(value: 0)
@@ -4194,7 +4299,9 @@ public extension CLICapture {
                                                  processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                                  timeout: timeout,
                                                  userInfo: userInfo,
-                                                 stackTrace: .init(filePath: filePath, function: function, line: line))
+                                                 stackTrace: .init(filePath: filePath,
+                                                                   function: function,
+                                                                   line: line))
               
     }
     
@@ -4237,7 +4344,9 @@ public extension CLICapture {
                                                        processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                                        timeout: timeout,
                                                        userInfo: userInfo,
-                                                       stackTrace: .init(filePath: filePath, function: function, line: line))
+                                                       stackTrace: .init(filePath: filePath,
+                                                                         function: function,
+                                                                         line: line))
     }
     
     /// Execute core process and return the output as data events
@@ -4275,7 +4384,9 @@ public extension CLICapture {
                                                      processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                                      timeout: timeout,
                                                      userInfo: userInfo,
-                                                     stackTrace: .init(filePath: filePath, function: function, line: line))
+                                                     stackTrace: .init(filePath: filePath,
+                                                                       function: function,
+                                                                       line: line))
     }
     
     /// Execute core process and return the output as string objects
@@ -4310,7 +4421,9 @@ public extension CLICapture {
                                                          processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                                          timeout: timeout,
                                                          userInfo: userInfo,
-                                                         stackTrace: .init(filePath: filePath, function: function, line: line))
+                                                         stackTrace: .init(filePath: filePath,
+                                                                           function: function,
+                                                                           line: line))
     
     }
     
@@ -4358,7 +4471,9 @@ public extension CLICapture {
                                                  processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                                  timeout: timeout,
                                                  userInfo: userInfo,
-                                                 stackTrace: .init(filePath: filePath, function: function, line: line))
+                                                 stackTrace: .init(filePath: filePath,
+                                                                   function: function,
+                                                                   line: line))
               
     }
     
@@ -4401,7 +4516,9 @@ public extension CLICapture {
                                                        processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                                        timeout: timeout,
                                                        userInfo: userInfo,
-                                                       stackTrace: .init(filePath: filePath, function: function, line: line))
+                                                       stackTrace: .init(filePath: filePath,
+                                                                         function: function,
+                                                                         line: line))
     }
     
     /// Execute core process and return the output as data events
@@ -4439,7 +4556,9 @@ public extension CLICapture {
                                                      processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                                      timeout: timeout,
                                                      userInfo: userInfo,
-                                                     stackTrace: .init(filePath: filePath, function: function, line: line))
+                                                     stackTrace: .init(filePath: filePath,
+                                                                       function: function,
+                                                                       line: line))
     }
     
     /// Execute core process and return the output as string objects
@@ -4474,7 +4593,9 @@ public extension CLICapture {
                                                          processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                                          timeout: timeout,
                                                          userInfo: userInfo,
-                                                         stackTrace: .init(filePath: filePath, function: function, line: line))
+                                                         stackTrace: .init(filePath: filePath,
+                                                                           function: function,
+                                                                           line: line))
     
     }
     
@@ -4507,7 +4628,7 @@ public extension CLICapture {
                               eventHandler: @escaping CapturedOutputEventHandler<DATA>,
                               timeout: DispatchTime = .distantFuture,
                               userInfo: [String: Any] = [:],
-                              stackTrace: CLIStackTrace) throws -> Int32 {
+                              stackTrace: CodeStackTrace) throws -> Int32 {
         
         return try self.waitAndCapture(arguments: Array<String>(),
                                        environment: environment,
@@ -4542,7 +4663,7 @@ public extension CLICapture {
                         processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                         timeout: DispatchTime = .distantFuture,
                         userInfo: [String: Any] = [:],
-                        stackTrace: CLIStackTrace) throws -> Int32 {
+                        stackTrace: CodeStackTrace) throws -> Int32 {
         
         return try self.executeAndWait(arguments: Array<String>(),
                                        environment: environment,
@@ -4584,7 +4705,7 @@ public extension CLICapture {
                                                                            _ capturedEvents: [CLICapturedOutputEvent<CapturedData>]) throws -> CapturedResponse,
                                                   timeout: DispatchTime = .distantFuture,
                                                   userInfo: [String: Any] = [:],
-                                                  stackTrace: CLIStackTrace) throws -> CapturedResponse {
+                                                  stackTrace: CodeStackTrace) throws -> CapturedResponse {
                   
         return try self.waitAndCaptureResponse(arguments: Array<String>(),
                                                environment: environment,
@@ -4626,7 +4747,7 @@ public extension CLICapture {
                                                 withResponseType responseType: CapturedResponse.Type,
                                                 timeout: DispatchTime = .distantFuture,
                                                 userInfo: [String: Any] = [:],
-                                                stackTrace: CLIStackTrace) throws -> CapturedResponse
+                                                stackTrace: CodeStackTrace) throws -> CapturedResponse
     where CapturedResponse: CLICapturedResponse {
         
         return try self.waitAndCaptureResponse(arguments: Array<String>(),
@@ -4668,7 +4789,7 @@ public extension CLICapture {
                                                   withDataType dataType: ResponseData.Type,
                                                   timeout: DispatchTime = .distantFuture,
                                                   userInfo: [String: Any] = [:],
-                                                  stackTrace: CLIStackTrace) throws -> CLICapturedDataResponse<ResponseData> {
+                                                  stackTrace: CodeStackTrace) throws -> CLICapturedDataResponse<ResponseData> {
         
         return try self.waitAndCaptureDataResponse(arguments: Array<String>(),
                                                    environment: environment,
@@ -4706,7 +4827,7 @@ public extension CLICapture {
                                                  eventHandler: @escaping CapturedOutputEventHandler<EventData>,
                                                  timeout: DispatchTime = .distantFuture,
                                                  userInfo: [String: Any] = [:],
-                                                 stackTrace: CLIStackTrace) throws -> CLICapturedStringResponse {
+                                                 stackTrace: CodeStackTrace) throws -> CLICapturedStringResponse {
             
         return try self.waitAndCaptureStringResponse(arguments: Array<String>(),
                                                      environment: environment,
@@ -4762,7 +4883,9 @@ public extension CLICapture {
                                        eventHandler: eventHandler,
                                        timeout: timeout,
                                        userInfo: userInfo,
-                                       stackTrace: .init(filePath: filePath, function: function, line: line))
+                                       stackTrace: .init(filePath: filePath,
+                                                         function: function,
+                                                         line: line))
         
         
     }
@@ -4796,7 +4919,9 @@ public extension CLICapture {
                                        processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                        timeout: timeout,
                                        userInfo: userInfo,
-                                       stackTrace: .init(filePath: filePath, function: function, line: line))
+                                       stackTrace: .init(filePath: filePath,
+                                                         function: function,
+                                                         line: line))
         
     }
     
@@ -4842,7 +4967,9 @@ public extension CLICapture {
                                                responseParser: responseParser,
                                                timeout: timeout,
                                                userInfo: userInfo,
-                                               stackTrace: .init(filePath: filePath, function: function, line: line))
+                                               stackTrace: .init(filePath: filePath,
+                                                                 function: function,
+                                                                 line: line))
     }
     
     
@@ -4886,7 +5013,9 @@ public extension CLICapture {
                                                withResponseType: responseType,
                                                timeout: timeout,
                                                userInfo: userInfo,
-                                               stackTrace: .init(filePath: filePath, function: function, line: line))
+                                               stackTrace: .init(filePath: filePath,
+                                                                 function: function,
+                                                                 line: line))
     }
     
     /// Execute core process and return the output as data events
@@ -4928,7 +5057,9 @@ public extension CLICapture {
                                                    withDataType: dataType,
                                                    timeout: timeout,
                                                    userInfo: userInfo,
-                                                   stackTrace: .init(filePath: filePath, function: function, line: line))
+                                                   stackTrace: .init(filePath: filePath,
+                                                                     function: function,
+                                                                     line: line))
     }
     
     /// Execute core process and return the output as string objects
@@ -4966,7 +5097,9 @@ public extension CLICapture {
                                                      eventHandler: eventHandler,
                                                      timeout: timeout,
                                                      userInfo: userInfo,
-                                                     stackTrace: .init(filePath: filePath, function: function, line: line))
+                                                     stackTrace: .init(filePath: filePath,
+                                                                       function: function,
+                                                                       line: line))
     
     }
     
@@ -5009,7 +5142,9 @@ public extension CLICapture {
                                        eventHandler: eventHandler,
                                        timeout: timeout,
                                        userInfo: userInfo,
-                                       stackTrace: .init(filePath: filePath, function: function, line: line))
+                                       stackTrace: .init(filePath: filePath,
+                                                         function: function,
+                                                         line: line))
         
         
     }
@@ -5043,7 +5178,9 @@ public extension CLICapture {
                                        processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                        timeout: timeout,
                                        userInfo: userInfo,
-                                       stackTrace: .init(filePath: filePath, function: function, line: line))
+                                       stackTrace: .init(filePath: filePath,
+                                                         function: function,
+                                                         line: line))
         
     }
     
@@ -5089,7 +5226,9 @@ public extension CLICapture {
                                                responseParser: responseParser,
                                                timeout: timeout,
                                                userInfo: userInfo,
-                                               stackTrace: .init(filePath: filePath, function: function, line: line))
+                                               stackTrace: .init(filePath: filePath,
+                                                                 function: function,
+                                                                 line: line))
     }
     
     
@@ -5133,7 +5272,9 @@ public extension CLICapture {
                                                withResponseType: responseType,
                                                timeout: timeout,
                                                userInfo: userInfo,
-                                               stackTrace: .init(filePath: filePath, function: function, line: line))
+                                               stackTrace: .init(filePath: filePath,
+                                                                 function: function,
+                                                                 line: line))
     }
     
     /// Execute core process and return the output as data events
@@ -5175,7 +5316,9 @@ public extension CLICapture {
                                                    withDataType: dataType,
                                                    timeout: timeout,
                                                    userInfo: userInfo,
-                                                   stackTrace: .init(filePath: filePath, function: function, line: line))
+                                                   stackTrace: .init(filePath: filePath,
+                                                                     function: function,
+                                                                     line: line))
     }
     
     /// Execute core process and return the output as string objects
@@ -5213,7 +5356,9 @@ public extension CLICapture {
                                                      eventHandler: eventHandler,
                                                      timeout: timeout,
                                                      userInfo: userInfo,
-                                                     stackTrace: .init(filePath: filePath, function: function, line: line))
+                                                     stackTrace: .init(filePath: filePath,
+                                                                       function: function,
+                                                                       line: line))
     
     }
     
@@ -5246,7 +5391,7 @@ public extension CLICapture {
                                                   processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                                   timeout: DispatchTime = .distantFuture,
                                                   userInfo: [String: Any] = [:],
-                                                  stackTrace: CLIStackTrace) throws -> CapturedResponse {
+                                                  stackTrace: CodeStackTrace) throws -> CapturedResponse {
                   
         return try self.waitAndCaptureResponse(arguments: Array<String>(),
                                                environment: environment,
@@ -5281,7 +5426,7 @@ public extension CLICapture {
                                                   processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                                   timeout: DispatchTime = .distantFuture,
                                                   userInfo: [String: Any] = [:],
-                                                  stackTrace: CLIStackTrace) throws -> CapturedResponse
+                                                  stackTrace: CodeStackTrace) throws -> CapturedResponse
     where CapturedResponse: CLICapturedResponse {
         
         return try self.waitAndCaptureResponse(arguments: Array<String>(),
@@ -5316,7 +5461,7 @@ public extension CLICapture {
                                                   processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                                   timeout: DispatchTime = .distantFuture,
                                                   userInfo: [String: Any] = [:],
-                                                  stackTrace: CLIStackTrace) throws -> CLICapturedDataResponse<ResponseData> {
+                                                  stackTrace: CodeStackTrace) throws -> CLICapturedDataResponse<ResponseData> {
         
         return try self.waitAndCaptureDataResponse(arguments: Array<String>(),
                                                    environment: environment,
@@ -5348,7 +5493,7 @@ public extension CLICapture {
                                       processWroteToItsSTDOutput: ((Process, STDOutputStream) -> Void)? = nil,
                                       timeout: DispatchTime = .distantFuture,
                                       userInfo: [String: Any] = [:],
-                                      stackTrace: CLIStackTrace) throws -> CLICapturedStringResponse {
+                                      stackTrace: CodeStackTrace) throws -> CLICapturedStringResponse {
             
         return try self.waitAndCaptureStringResponse(arguments: Array<String>(),
                                                      environment: environment,
@@ -5402,7 +5547,9 @@ public extension CLICapture {
                                                processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                                timeout: timeout,
                                                userInfo: userInfo,
-                                               stackTrace: .init(filePath: filePath, function: function, line: line))
+                                               stackTrace: .init(filePath: filePath,
+                                                                 function: function,
+                                                                 line: line))
     }
     
     
@@ -5439,7 +5586,9 @@ public extension CLICapture {
                                                processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                                timeout: timeout,
                                                userInfo: userInfo,
-                                               stackTrace: .init(filePath: filePath, function: function, line: line))
+                                               stackTrace: .init(filePath: filePath,
+                                                                 function: function,
+                                                                 line: line))
     }
     
     /// Execute core process and return the output as data events
@@ -5474,7 +5623,9 @@ public extension CLICapture {
                                                    processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                                    timeout: timeout,
                                                    userInfo: userInfo,
-                                                   stackTrace: .init(filePath: filePath, function: function, line: line))
+                                                   stackTrace: .init(filePath: filePath,
+                                                                     function: function,
+                                                                     line: line))
     }
     
     /// Execute core process and return the output as string objects
@@ -5506,7 +5657,9 @@ public extension CLICapture {
                                                      processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                                      timeout: timeout,
                                                      userInfo: userInfo,
-                                                     stackTrace: .init(filePath: filePath, function: function, line: line))
+                                                     stackTrace: .init(filePath: filePath,
+                                                                       function: function,
+                                                                       line: line))
     
     }
     
@@ -5549,7 +5702,9 @@ public extension CLICapture {
                                                processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                                timeout: timeout,
                                                userInfo: userInfo,
-                                               stackTrace: .init(filePath: filePath, function: function, line: line))
+                                               stackTrace: .init(filePath: filePath,
+                                                                 function: function,
+                                                                 line: line))
     }
     
     
@@ -5586,7 +5741,9 @@ public extension CLICapture {
                                                processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                                timeout: timeout,
                                                userInfo: userInfo,
-                                               stackTrace: .init(filePath: filePath, function: function, line: line))
+                                               stackTrace: .init(filePath: filePath,
+                                                                 function: function,
+                                                                 line: line))
     }
     
     /// Execute core process and return the output as data events
@@ -5621,7 +5778,9 @@ public extension CLICapture {
                                                    processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                                    timeout: timeout,
                                                    userInfo: userInfo,
-                                                   stackTrace: .init(filePath: filePath, function: function, line: line))
+                                                   stackTrace: .init(filePath: filePath,
+                                                                     function: function,
+                                                                     line: line))
     }
     
     /// Execute core process and return the output as string objects
@@ -5653,7 +5812,9 @@ public extension CLICapture {
                                                      processWroteToItsSTDOutput: processWroteToItsSTDOutput,
                                                      timeout: timeout,
                                                      userInfo: userInfo,
-                                                     stackTrace: .init(filePath: filePath, function: function, line: line))
+                                                     stackTrace: .init(filePath: filePath,
+                                                                       function: function,
+                                                                       line: line))
     
     }
     

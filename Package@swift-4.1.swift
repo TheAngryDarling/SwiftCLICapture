@@ -17,7 +17,9 @@ let package = Package(
         .package(url: "https://github.com/TheAngryDarling/SwiftHelpfulProtocols.git",
                  from: "1.0.0"),
         .package(url: "https://github.com/TheAngryDarling/SwiftSynchronizeObjects.git",
-                 from: "1.0.1")
+                 from: "1.0.1"),
+        .package(url: "https://github.com/TheAngryDarling/SwiftCodeStackTrace.git",
+                 from: "2.0.0")
     ],
     targets: [
         // Targets are the basic building blocks of a package. A target can define a module or a test suite.
@@ -25,7 +27,8 @@ let package = Package(
         .target(
             name: "CLICapture",
             dependencies: ["SwiftHelpfulProtocols",
-                          "SynchronizeObjects"]),
+                           "SynchronizeObjects",
+                           "CodeStackTrace"]),
         .testTarget(
             name: "CLICaptureTests",
             dependencies: ["CLICapture"]),
