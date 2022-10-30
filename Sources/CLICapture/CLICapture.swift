@@ -18,15 +18,18 @@ open class CLICapture {
         case procesTimeout(Process)
     }
     
+    public enum STDOutputStream {
+        case out
+        case err
+    }
+    
     /// A Data buffer used to collect any
     /// Data that should be going to STD Out or STD Err
     ///
     /// Primary purpose of this object is for testing
     public class STDBuffer {
-        internal enum Stream {
-            case out
-            case err
-        }
+        public typealias Stream = STDOutputStream
+        
         private var  data: Data
         private let lock = NSLock()
         
@@ -52,7 +55,11 @@ open class CLICapture {
             return self.data
         }
         
-        internal func append<S>(_ data: S,
+        /// Append data to the buffer
+        /// - Parameters:
+        ///  - data: The data to append
+        ///  - stream: The stream the data was for (STDOUT or STDERR)
+        public func append<S>(_ data: S,
                                 to stream: Stream) where S: Sequence, S.Element == UInt8 {
             self.lock.lock()
             defer {
@@ -60,12 +67,13 @@ open class CLICapture {
             }
             self.data.append(contentsOf: data)
         }
+        /// Append data to the buffer for the STDOUT Stream
+        /// - Parameters:
+        ///  - data: The data to append
+        public func append<S>(_ data: S) where S: Sequence, S.Element == UInt8 {
+            self.append(data, to: .out)
+        }
         
-    }
-    
-    public enum STDOutputStream {
-        case out
-        case err
     }
     
     /// A Data buffer used to collect any
@@ -111,7 +119,7 @@ open class CLICapture {
             self.empty(all: true)
         }
         
-        override internal func append<S>(_ data: S,
+        public override func append<S>(_ data: S,
                                          to stream: Stream) where S: Sequence, S.Element == UInt8 {
             switch stream {
                 case .out:
@@ -120,6 +128,10 @@ open class CLICapture {
                     self.err.append(data, to: stream)
             }
             super.append(data, to: stream)
+        }
+        
+        public override func append<S>(_ data: S) where S: Sequence, S.Element == UInt8 {
+            self.append(data, to: .out)
         }
         
     }
